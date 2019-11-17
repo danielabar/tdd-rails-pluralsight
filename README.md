@@ -11,6 +11,7 @@
     - [Rails Application Setup](#rails-application-setup)
     - [First Feature Spec: Happy Path](#first-feature-spec-happy-path)
     - [First Feature Spec: Sad Path](#first-feature-spec-sad-path)
+    - [Page Object Pattern](#page-object-pattern)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -595,7 +596,41 @@ When things go wrong...
 Add another scenario to [test](i-rock/spec/features/create_achievement_spec.rb) that attempts to submit empty form and expects error message.
 
 ```ruby
-code
+scenario 'cannot create achievement with invalid data' do
+  visit('/')
+  click_on('New Achievement')
+  click_on('Create Achievement')
+
+  expect(page).to have_content("can't be blank")
+end
 ```
 
 This will fail because currently there is no validation so all empty form values are allowed.
+
+To fix this, add validation to [achievement model](i-rock/app/models/achievement.rb):
+
+```ruby
+class Achievement < ActiveRecord::Base
+  validates :title, presence: true
+  enum privacy: %i[public_access private_access friends_acceess]
+end
+```
+
+But now running tests get `ActionView: MissingTemplate`. This is because in [controller create method](i-rock/app/controllers/achievements_controller.rb), only handling the success case. Solution:
+
+```ruby
+def create
+  @achievement = Achievement.new(achievement_params)
+  if @achievement.save
+    redirect_to root_url, notice: 'Achievement has been created'
+  else
+    render :new
+  end
+end
+```
+
+Now test is passing.
+
+What about validating all other fields such as Description, etc? Could add more scenarios to acceptance test but this is a high cost/low value way of testing validations. Recommend to just have one error case at acceptance level, then create more unit tests at model level to verify each individual field validation (covered later in this course).
+
+### Page Object Pattern
