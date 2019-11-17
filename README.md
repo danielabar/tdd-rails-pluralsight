@@ -1,3 +1,19 @@
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**  *generated with [DocToc](https://github.com/thlorenz/doctoc)*
+
+- [Test-driven Rails with RSpec, Capybara, and Cucumber](#test-driven-rails-with-rspec-capybara-and-cucumber)
+  - [TDD 101](#tdd-101)
+    - [RSpec 101](#rspec-101)
+    - [Bowling Game: Kata - Rules](#bowling-game-kata---rules)
+    - [Different Types of Tests](#different-types-of-tests)
+  - [Acceptance Tests](#acceptance-tests)
+    - [Rails Application Setup](#rails-application-setup)
+    - [First Feature Spec: Happy Path](#first-feature-spec-happy-path)
+    - [First Feature Spec: Sad Path](#first-feature-spec-sad-path)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
 # Test-driven Rails with RSpec, Capybara, and Cucumber
 
 > My notes from Pluralsight [course](https://app.pluralsight.com/library/courses/test-driven-rails-rspec-capybara-cucumber/table-of-contents) on TDD Rails.
