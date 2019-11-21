@@ -13,6 +13,7 @@
     - [First Feature Spec: Sad Path](#first-feature-spec-sad-path)
     - [Page Object Pattern](#page-object-pattern)
     - [Factory Girl (actually Bot)](#factory-girl-actually-bot)
+    - [Cucumber](#cucumber)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -790,7 +791,7 @@ scenario 'achievement public page' do
 end
 ```
 
-Can also define "sub factories" that inherit from parent factory, for example, add `public_achievement` sub-factory:
+Can also define nested factories that inherit from parent factory, for example, add `public_achievement` sub-factory:
 
 ```ruby
 FactoryBot.define do
@@ -800,10 +801,10 @@ FactoryBot.define do
     privacy { Achievement.privacies[:private_access] }
     featured { false }
     cover_image { 'some_file.png' }
-  end
 
-  factory :public_achievement do
-    privacy Achievement.privacy[:public_access]
+    factory :public_achievement do
+      privacy Achievement.privacy[:public_access]
+    end
   end
 end
 ```
@@ -891,3 +892,93 @@ Fix test by expecting css instead of html text - using capybara matcher `have_cs
 ```ruby
 expect(page).to have_css('em', text: 'was')
 ```
+
+### Cucumber
+
+Tool to write automated tests in plain English that can be read by anyone, including non technical people. Looks something like:
+
+```
+Feature: Create new achievement
+
+  In order to keep and share my achievements
+  As a user
+  I want to create them
+
+  Scenario: User creates new achievement
+    Given I am a logged in user
+    When I create new public achievement
+    Then anybody can see this achievement online
+
+  Scenario: ...
+```
+
+Given/When/Then keywords === Arrange/Act/Assert
+
+To use it, add to gem file in dev/test section: `gem 'spring-commands-cucumber` and in test section: `gem: 'cucumber-rails', require: false` and `gem 'database_cleaner'`, then run:
+
+```shell
+bundle _1.17.3_ install
+bundle _1.17.3_ exec spring binstub --all # generate `bin/cucumber`
+bin/rails g cucumber:install # generate cucumber config files
+```
+
+Define a new cucumber test [achievement page](i-rock/features/achievement_page.feature). `And` is the same as another `Given`:
+
+```ruby
+Feature: Achievement Page
+
+In order to read others achievements
+As a guest user
+I want to see public achievement
+
+Scenario: guest user sees public achievement
+  Given I am a guest user
+  And there is a public achievement
+  When I go to the achievement's page
+  Then I must see achievement's content
+```
+
+To run the test: `bin/cucumber`. Fails on scenario and steps undefined. Error message helpfully provides syntax for how to define steps:
+
+```ruby
+# You can implement step definitions for undefined steps with these snippets:
+
+Given("I am a guest user") do
+  pending # Write code here that turns the phrase above into concrete actions
+end
+
+Given("there is a public achievement") do
+  pending # Write code here that turns the phrase above into concrete actions
+end
+
+When("I go to the achievement's page") do
+  pending # Write code here that turns the phrase above into concrete actions
+end
+
+Then("I must see achievement's content") do
+  pending # Write code here that turns the phrase above into concrete actions
+end
+```
+
+Put the steps in [achievements steps](i-rock/features/step_definitions/achievements_steps.rb). To share data between steps, use `@` instance variables.
+
+```ruby
+# i-rock/features/step_definitions/achievements_steps.rb
+
+Given('I am a guest user') do
+end
+
+Given('there is a public achievement') do
+  @achievement = FactoryBot.create(:public_achievement, title: 'I did it')
+end
+
+When("I go to the achievement's page") do
+  visit(achievement_path(@achievement.id))
+end
+
+Then("I must see achievement's content") do
+  expect(page).to have_content('I did it')
+end
+```
+
+Running tests again `bin/cucumber` should pass now.

@@ -52,6 +52,7 @@ group :development, :test do
 
   # More test support
   gem 'spring-commands-rspec'
+  gem 'spring-commands-cucumber'
   gem 'rspec-rails'
   gem 'factory_bot_rails'
 end
@@ -63,4 +64,6 @@ end
 
 group :test do
   gem 'capybara'
+  gem 'cucumber-rails', require: false
+  gem 'database_cleaner'
 end
