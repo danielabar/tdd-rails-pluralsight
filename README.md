@@ -14,6 +14,9 @@
     - [Page Object Pattern](#page-object-pattern)
     - [Factory Girl (actually Bot)](#factory-girl-actually-bot)
     - [Cucumber](#cucumber)
+  - [Controller Tests](#controller-tests)
+    - [Controller's Responsibilities](#controllers-responsibilities)
+    - [Test New and Show Actions](#test-new-and-show-actions)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -982,3 +985,124 @@ end
 ```
 
 Running tests again `bin/cucumber` should pass now.
+
+## Controller Tests
+
+### Controller's Responsibilities
+
+What behaviour needs to be tested? What are things that controllers in typical Rails app do?
+
+- Authenticate and authorize requests
+- Handle models
+- Create response
+  - Render template (usually involves setting some instance variables that template can use)
+  - Respond with required format and headers (eg: JSON)
+  - redirect to another route
+
+For this module, will focus on *Integration* approach to testing - look at controller as black box - don't know internals, only concerned with providing input data and expecting certain output.
+
+Test that:
+- controller action is protected (authentication, authorization)
+- particular template is rendered
+- expected data is assigned to template
+
+### Test New and Show Actions
+
+Create [achievements controller spec](i-rock/spec/controllers/achievements_controller_spec.rb).
+
+An empty controller spec scaffold should pass:
+
+```ruby
+require 'rails_helper'
+
+describe AchievementsController, type: :controller do
+end
+```
+
+```shell
+$ bin/rspec spec/controllers
+```
+
+Strictly speaking do not need `type: controller` because of placement in `spec/controllers` folder, Rails already knows what type of test this is.
+
+By convention, first word in spec description is http verb, then action name eg: `GET new`.
+
+Rspec provides helper methods for testing controller methods: `get, post, put, delete`.
+
+Usage is method name, followed by action name, followed by any data it requires.
+
+To verify response, use `render_template` matcher.
+
+`assigns` helper contains all instance variables of the action, pass it a symbol of instance var.
+
+`be_a_new` is a matcher that takes a class name, verifies that assigned object is an instance of that class.
+
+To test `show` action, it needs a record in database, use FactoryBot to create it, put it in `let` method.
+
+When executing get :show, note we pass id to it.
+
+```ruby
+# i-rock/spec/controllers/achievements_controller_spec.rb
+require 'rails_helper'
+
+describe AchievementsController, type: :controller do
+  describe 'GET new' do
+    it 'renders :new template' do
+      get :new
+      expect(response).to render_template(:new)
+    end
+
+    it 'assigns new Achievement to @achievement' do
+      get :new
+      expect(assigns(:achievement)).to be_a_new(Achievement)
+    end
+  end
+
+  describe 'GET show' do
+    let(:achievement) { FactoryBot.create(:public_achievement) }
+    it 'renders :show template' do
+      get :show, id: achievement.id
+      expect(response).to render_template(:show)
+    end
+
+    it 'assigns requested achievement to @achievement' do
+      get :show, id: achievement.id
+      # instance variable populated in `show` action should be the same as what was just created in test
+      expect(assigns(:achievement)).to eq(achievement)
+    end
+  end
+end
+```
+
+Recall achievements controller `show` method is currently also generating markdown description, refactor this logic to model and modify template accordingly.
+
+```ruby
+# i-rock/app/models/achievement.rb
+class Achievement < ActiveRecord::Base
+  validates :title, presence: true
+
+  enum privacy: %i[public_access private_access friends_acceess]
+
+  def description_html
+    Redcarpet::Markdown.new(Redcarpet::Render::HTML).render(description)
+  end
+end
+
+# i-rock/app/controllers/achievements_controller.rb
+class AchievementsController < ApplicationController
+  ...
+  def show
+    @achievement = Achievement.find(params[:id])
+    # no longer populating @description instance var here with markdown
+  end
+  ...
+end
+
+# i-rock/app/views/achievements/show.html.erb
+<h1><%= @achievement.title %></h1>
+<div class="desc">
+  <%= @achievement.description_html.html_safe %>
+</div>
+```
+
+Run all tests `bin/rspec` to make sure refactor hasn't broken anything.
