@@ -1,9 +1,15 @@
+# frozen_string_literal: true
+
 FactoryBot.define do
   factory :achievement do
-    title { "MyString" }
-    description { "MyText" }
-    privacy { 1 }
+    sequence(:title) { |n| "Achievement #{n}"}
+    description { 'description' }
+    privacy { Achievement.privacies[:private_access] }
     featured { false }
-    cover_image { "MyString" }
+    cover_image { 'some_file.png' }
+  end
+
+  factory :public_achievement do
+    privacies { Achievement.privacies[:public_access] }
   end
 end

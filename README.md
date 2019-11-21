@@ -12,6 +12,7 @@
     - [First Feature Spec: Happy Path](#first-feature-spec-happy-path)
     - [First Feature Spec: Sad Path](#first-feature-spec-sad-path)
     - [Page Object Pattern](#page-object-pattern)
+    - [Factory Girl (actually Bot)](#factory-girl-actually-bot)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -634,3 +635,259 @@ Now test is passing.
 What about validating all other fields such as Description, etc? Could add more scenarios to acceptance test but this is a high cost/low value way of testing validations. Recommend to just have one error case at acceptance level, then create more unit tests at model level to verify each individual field validation (covered later in this course).
 
 ### Page Object Pattern
+
+[Example PO](i-rock/spec/support/new_achievement_form.rb) | [Example Usage](i-rock/spec/features/create_achievement_with_po_spec.rb)
+
+All the capybara helper methods in test make it "noisy" - makes it difficul to detect test *intention* - what's being tested and why?
+
+Imagine if `create new achievement with valid data` scenario could be simplified:
+
+```ruby
+scenario 'create new achievement with valid data' do
+  new_achievement_form = NewAchievementForm.new
+
+  # only provide form values test is asserting on,
+  # remainder of values can be default
+  new_achievement_form.visit_page.fill_in_with(
+    title: 'Read a book'
+  ).submit
+
+  # test assertions...
+end
+```
+
+Always return `self` from PO methods so they can be chained.
+
+```ruby
+# i-rock/spec/support/new_achievement_form.rb
+class NewAchievementForm
+  include Capybara::DSL
+
+  def visit_page
+    visit('/')
+    click_on('New Achievement')
+    self
+  end
+
+  def fill_in_with(params = {})
+    fill_in('Title', with: params.fetch(:title, 'Read a book'))
+    fill_in('Description', with: 'Excellent read')
+    select('Public', from: 'Privacy')
+    check('Featured achievement')
+    attach_file('Cover image', "#{Rails.root}/spec/fixtures/cover_image.png")
+    self
+  end
+
+  def submit
+    click_on('Create Achievement')
+    self
+  end
+end
+
+# i-rock/spec/features/create_achievement_with_po_spec.rb
+require 'rails_helper'
+require_relative '../support/new_achievement_form'
+
+feature 'create new achievement' do
+  let(:new_achievement_form) { NewAchievementForm.new }
+
+  scenario 'create new achievement with valid data' do
+    new_achievement_form.visit_page.fill_in_with(
+      title: 'Read a book'
+    ).submit
+
+    expect(page).to have_content('Achievement has been created')
+    expect(Achievement.last.title).to eq('Read a book')
+  end
+
+  scenario 'cannot create achievement with invalid data' do
+    new_achievement_form.visit_page.submit
+    expect(page).to have_content("can't be blank")
+  end
+end
+```
+
+### Factory Girl (actually Bot)
+
+Course uses Factory Girl but that's been deprecated in favour of Factory Bot, see this [transition guide](https://github.com/thoughtbot/factory_bot/blob/4-9-0-stable/UPGRADE_FROM_FACTORY_GIRL.md)
+
+Used to prepare Data for tests.
+
+Add new [spec for achievement page](i-rock/spec/features/achievement_page_spec.rb) that creates an achievement, then visits the page that displays it:
+
+```ruby
+require 'rails_helper'
+
+feature 'achievement page' do
+  scenario 'achievement public page' do
+    # create achievement in database,  so we can visit a page that displays it
+    achievement = Achievement.create(title: 'Just did it')
+    visit("/achievements/#{achievement.id}")
+
+    expect(page).to have_content('Just did it')
+  end
+end
+```
+
+Test will fail since the `/achievement/:id` route does not yet exist, add it to [routes.rb](i-rock/config/routes.rb) by adding `show` to achievements resource:
+
+```ruby
+codeRails.application.routes.draw do
+  resources :achievements, only: %i[new create show]
+  root to: 'welcome#index'
+end
+```
+
+Now test fails `The action 'show' could not be found for AchievementsController`. Define `show` action in [achivements_controller.rb](i-rock/app/controllers/achievements_controller.rb)
+
+```ruby
+# i-rock/app/controllers/achievements_controller.rb
+def show
+  @achievement = Achievement.find(params[:id])
+end
+```
+
+Then add the [template](i-rock/app/views/achievements/show.html.erb)
+
+```ruby
+<h1><%= @achievement.title %></h1>
+```
+
+Now test passes. Now want to test that description is displayed, need to duplicate some code to create achievement, but this time with description:
+
+```ruby
+scenario 'render markdown description' do
+  achievement = Achievement.create(description: 'That *was* hard')
+  visit("/achievements/#{achievement.id}")
+
+  expect(page).to have_content('<em>was</em>')
+end
+```
+
+Test won't work because `achievement` can't be created without a title. Use `create!` instead of `create` to see exception:
+
+```
+ActiveRecord::RecordInvalid:
+  Validation failed: Title can't be blank
+```
+
+So are forced to specify a title to make the test work. But that's awkward, could have model with many validated fields but they're not of interest to a particular test.
+
+*Factories* are the solution.
+
+Back when we generated the model `bin/rails g model achievement title description:text privacy:integer featured:boolean cover_image`, a [factory](i-rock/spec/factories/achievements.rb) was auto generated with default values. You can edit these.
+
+To use the factory, replace `Achievement.create` in test with either `FactoryBot.create...` which creates model and populates in the database, or `FactoryBot.build...` which only generates a model in memory.
+
+For acceptance tests use `FactoryBot.create...` because need the model persisted in database to show it in a view. Note can also override defaults when using the factory as in the example below where `title` property is overridden:
+
+```ruby
+scenario 'achievement public page' do
+  achievement = FactoryBot.create(:achievement, title: 'Just did it')
+  visit("/achievements/#{achievement.id}")
+
+  expect(page).to have_content('Just did it')
+end
+```
+
+Can also define "sub factories" that inherit from parent factory, for example, add `public_achievement` sub-factory:
+
+```ruby
+FactoryBot.define do
+  factory :achievement do
+    title { 'Title' }
+    description { 'description' }
+    privacy { Achievement.privacies[:private_access] }
+    featured { false }
+    cover_image { 'some_file.png' }
+  end
+
+  factory :public_achievement do
+    privacy Achievement.privacy[:public_access]
+  end
+end
+```
+
+Use sequence feature when populating a field that must be unique for each record (eg: username or email). Example, to make `title` unique:
+
+```ruby
+FactoryBot.define do
+  factory :achievement do
+    sequence(:title) { |n| "Achievement #{n}"}
+    description { 'description' }
+    privacy { Achievement.privacies[:private_access] }
+    featured { false }
+    cover_image { 'some_file.png' }
+  end
+
+  factory :public_achievement do
+    privacy Achievement.privacy[:public_access]
+  end
+end
+```
+
+Another `FactoryBot` method is `create_list` to create several model objects all at once. Add to any test:
+
+```ruby
+achievements = FactoryBot.create_list(:achievement, 3)
+p achievements
+```
+
+Outputs:
+
+```
+[#<Achievement id: 2, title: "Achievement 1", description: "description", privacy: 1, featured: false, cover_image: "some_file.png", created
+_at: "2019-11-21 00:22:34", updated_at: "2019-11-21 00:22:34">, #<Achievement id: 3, title: "Achievement 2", description: "description", pri
+vacy: 1, featured: false, cover_image: "some_file.png", created_at: "2019-11-21 00:22:34", updated_at: "2019-11-21 00:22:34">, #<Achievement
+ id: 4, title: "Achievement 3", description: "description", privacy: 1, featured: false, cover_image: "some_file.png", created_at: "2019-11-
+21 00:22:34", updated_at: "2019-11-21 00:22:34">]
+```
+
+Now implement description rendering as markdown to make other test pass. Modify [show view](i-rock/app/views/achievements/show.html.erb) to display description:
+
+```ruby
+<h1><%= @achievement.title %></h1>
+<div class="desc">
+  <%= @achievement.description %>
+</div>
+```
+
+Need to add markdown library. Add `gem 'redcarpet'` to [Gemfile](i-rock/Gemfile), then run `bundle _1.17.3_ install`.
+
+Then modify [achievements controller](i-rock/app/controllers/achievements_controller.rb) to apply markdown renderer to description:
+
+```ruby
+def show
+  @achievement = Achievement.find(params[:id])
+  @description = Redcarpet::Markdown.new(Redcarpet::Render::HTML).render(@achievement.description)
+end
+```
+
+Then modify [show view](i-rock/app/views/achievements/show.html.erb) to display description field from controller:
+
+```ruby
+<h1><%= @achievement.title %></h1>
+<div class="desc">
+  <%= @description %>
+</div>
+```
+
+Now test passes.
+
+To view results in browser, navigate to [http://localhost:3000/achievements/1](http://localhost:3000/achievements/1) (need to restart server after adding new dep to gemfile).
+
+However, it renders as escaped html, to fix it modify show template `<%= @description.html_safe %>`
+
+BUT that breaks the description test:
+
+```
+1) achievement page render markdown description
+Failure/Error: expect(page).to have_content('<em>was</em>')
+  expected to find text "<em>was</em>" in "I Rock\nHome (current) New Achievement Link\nAchievement 1\nThat was hard"
+```
+
+Fix test by expecting css instead of html text - using capybara matcher `have_css`:
+
+```ruby
+expect(page).to have_css('em', text: 'was')
+```

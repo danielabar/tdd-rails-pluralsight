@@ -132,6 +132,7 @@ GEM
     rb-inotify (0.10.0)
       ffi (~> 1.0)
     rdoc (4.3.0)
+    redcarpet (3.5.0)
     regexp_parser (1.6.0)
     rspec-core (3.9.0)
       rspec-support (~> 3.9.0)
@@ -218,6 +219,7 @@ DEPENDENCIES
   jquery-rails
   puma
   rails (= 4.2.2)
+  redcarpet
   rspec-rails
   sass-rails (~> 5.0)
   sassc-rails (>= 2.1.0)
