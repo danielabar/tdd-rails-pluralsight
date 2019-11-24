@@ -1,0 +1,10 @@
+Metrics/BlockLength:
+  Exclude:
+    - 'Rakefile'
+    - '**/*.rake'
+    - 'spec/**/*.rb'
+Metrics/LineLength:
+  Max: 150
+Style/BlockDelimiters:
+  Exclude:
+    - 'spec/**/*.rb'

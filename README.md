@@ -3,6 +3,7 @@
 **Table of Contents**  *generated with [DocToc](https://github.com/thlorenz/doctoc)*
 
 - [Test-driven Rails with RSpec, Capybara, and Cucumber](#test-driven-rails-with-rspec-capybara-and-cucumber)
+  - [Commonly used commands](#commonly-used-commands)
   - [TDD 101](#tdd-101)
     - [RSpec 101](#rspec-101)
     - [Bowling Game: Kata - Rules](#bowling-game-kata---rules)
@@ -17,12 +18,25 @@
   - [Controller Tests](#controller-tests)
     - [Controller's Responsibilities](#controllers-responsibilities)
     - [Test New and Show Actions](#test-new-and-show-actions)
+    - [Test Create Action](#test-create-action)
+    - [Test Index and Edit Actions](#test-index-and-edit-actions)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 # Test-driven Rails with RSpec, Capybara, and Cucumber
 
 > My notes from Pluralsight [course](https://app.pluralsight.com/library/courses/test-driven-rails-rspec-capybara-cucumber/table-of-contents) on TDD Rails.
+
+## Commonly used commands
+
+| Command        | Description         |
+| -------------|-------------|
+| `bin/rails s`      | Start rails server |
+| `bin/rails c`      | Start rails console |
+| `bundle exec rake routes`      | List all routes |
+| `bin/rspec`      | Run all tests      |
+| `bin/rspec spec/controllers` | Run only controller tests      |
+| `bin/cucumber` | Run cucumber tests |
 
 ## TDD 101
 
@@ -1106,3 +1120,167 @@ end
 ```
 
 Run all tests `bin/rspec` to make sure refactor hasn't broken anything.
+
+### Test Create Action
+
+Start by creating *test outline*:
+
+```ruby
+# i-rock/spec/controllers/achievements_controller_spec.rb
+describe AchievementsController, type: :controller do
+  ...
+  describe 'POST create' do
+    it 'redirects to achievements#show'
+    it 'creates new achievement in database'
+  end
+  ...
+end
+```
+
+Then fill these in. Need to submit `POST` to `:create` action with achievement data.
+
+Use `FactoryBot` to generate achievement data, using `attributes_for` method which creates a hash of attributes with default values from the factory.
+
+Want to expect that response from creating an achievement redirects to `achievement_path`, but this expects an achievment object. See output of `bundle exec rake routes` to understand this:
+
+```shell
+$ bundle exec rake routes
+        Prefix  Verb URI Pattern                 Controller#Action
+   achievements POST /achievements(.:format)     achievements#create
+new_achievement GET  /achievements/new(.:format) achievements#new
+    achievement GET  /achievements/:id(.:format) achievements#show
+           root GET  /                           welcome#index
+```
+
+To get access to the achievement object that was just created from the POST action in test, use Rails helper method `assign` to access the instance variable that was created by the controller. And Rspec matcher `redirect_to` to assert on where you expect response was redirected to.
+
+So far we have:
+
+```ruby
+# i-rock/spec/controllers/achievements_controller_spec.rb
+describe 'POST create' do
+  it 'redirects to achievements#show' do
+    post :create, achievement: FactoryBot.attributes_for(:public_achievement)
+    expect(response).to redirect_to(achievement_path(assigns[:achievement]))
+  end
+
+  it 'creates new achievement in database'
+end
+```
+
+Failing on `'0' is not a valid privacy`. Neex to fix factory:
+
+```ruby
+# i-rock/spec/factories/achievements.rb
+FactoryBot.define do
+  factory :achievement do
+    sequence(:title) { |n| "Achievement #{n}"}
+    description { 'description' }
+    featured { false }
+    cover_image { 'some_file.png' }
+
+    factory :public_achievement do
+      privacy { :public_access }
+    end
+
+    factory :private_achievement do
+      privacy { :private_access }
+    end
+  end
+end
+```
+
+Now failing on `Expected response to be a redirect to <http://test.host/achievements/1> but was a redirect to <http://test.host/>`
+
+This indicates an error in implementation code, fix it in achievements controller. Currently it redirects to root url after achievement created `redirect_to root_url, notice: 'Achievement has been created'`:
+
+```ruby
+# i-rock/app/controllers/achievements_controller.rb
+def create
+  @achievement = Achievement.new(achievement_params)
+  if @achievement.save
+    redirect_to achievement_url(@achievement), notice: 'Achievement has been created'
+  else
+    render :new
+  end
+end
+```
+
+Now test passes.
+
+Implement second test `creates new achievement in database`. Use `expect` with a code block, then verify it has modified the total Achievement count by one. This will compare the count of Achievements in the database before and after the block given to `expect` has run:
+
+```ruby
+# i-rock/spec/controllers/achievements_controller_spec.rb
+it 'creates new achievement in database' do
+  expect {
+    post :create, achievement: FactoryBot.attributes_for(:public_achievement)
+  }.to change(Achievement, :count).by(1)
+end
+```
+
+And tests are passing.
+
+But tests need more work, currently only testing create with valid data. Need to also test with invalid data.
+
+Organize the two current POST tests within a `context 'valid data'` block.
+
+Then add another context block for `invalid data`.
+
+Create an achievement with a blank title, which is not allowed, then expect that the new template has been rendered.
+
+Also expect that the count of Achievement records in database is *not* modified when attempt to create an invalid achievement.
+
+```ruby
+context 'invalid data' do
+  it 'renders :new  template' do
+    post :create, achievement: FactoryBot.attributes_for(:public_achievement, title: '')
+    expect(response).to render_template(:new)
+  end
+
+  it 'does not create new achievement in the database' do
+    expect {
+      post :create, achievement: FactoryBot.attributes_for(:public_achievement, title: '')
+    }.not_to change(Achievement, :count)
+  end
+end
+```
+
+Test could use some refactoring. Usually when using `context`, it means there's some common data in use among the tests. For example, invalid data defined by `FactoryBot.attributes_for(:public_achievement, title: '')` is used twice in tests, this should be pulled out to a `let` block. Also apply similar refactor for valid data:
+
+```ruby
+# i-rock/spec/controllers/achievements_controller_spec.rb
+describe 'POST create' do
+  context 'valid data' do
+    let(:valid_data) { FactoryBot.attributes_for(:public_achievement) }
+
+    it 'redirects to achievements#show' do
+      post :create, achievement: valid_data
+      expect(response).to redirect_to(achievement_path(assigns[:achievement]))
+    end
+
+    it 'creates new achievement in database' do
+      expect {
+        post :create, achievement: valid_data
+      }.to change(Achievement, :count).by(1)
+    end
+  end
+
+  context 'invalid data' do
+    let(:invalid_data) { FactoryBot.attributes_for(:public_achievement, title: '') }
+
+    it 'renders :new  template' do
+      post :create, achievement: invalid_data
+      expect(response).to render_template(:new)
+    end
+
+    it 'does not create new achievement in the database' do
+      expect {
+        post :create, achievement: invalid_data
+      }.not_to change(Achievement, :count)
+    end
+  end
+end
+```
+
+### Test Index and Edit Actions
