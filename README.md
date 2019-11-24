@@ -22,6 +22,7 @@
     - [Test Index and Edit Actions](#test-index-and-edit-actions)
     - [Test Update and Destroy Actions](#test-update-and-destroy-actions)
     - [Install and Setup Devise gem](#install-and-setup-devise-gem)
+    - [Test Authentication](#test-authentication)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -36,10 +37,11 @@
 | `bin/rails s`      | Start rails server |
 | `bin/rails c`      | Start rails console |
 | `bundle exec rake routes`      | List all routes |
-| `bin/rspec`      | Run all tests      |
+| `bin/rspec`      | Run all Rspec tests      |
 | `bin/rspec spec/controllers` | Run only controller tests      |
 | `bin/rspec --format=documentation` | Run tests with documentation |
 | `bin/cucumber` | Run cucumber tests |
+| `bin/rake db:migrate` | Run database migration(s) |
 
 ## TDD 101
 
@@ -236,12 +238,12 @@ Black box testing, emulate client actions, testing from client perspective. Very
 
 Setup rails app, RSpec and Capybara gems.
 
-Instructor using: ruby 2.2.2 and rails 4.2.2.
+Instructor using: ruby 2.2.2 and rails 4.2.2. Instead will  use rails 4.2.3 because of [devise bug](https://github.com/plataformatec/devise/issues/4186)
 
 Scaffold rails app, `-T` to skip creating tests because will do in this course:
 
 ```shell
-gem install rails -v 4.2.2
+gem install rails -v 4.2.3
 rails _4.2.2_ new i-rock -T
 bundle _1.17.3_ install
 bundle _1.17.3_ exec spring binstub --all
@@ -1607,3 +1609,83 @@ AchievementsController
 ```
 
 ### Install and Setup Devise gem
+
+Most important responsibility of controller - check if user is allowed to do what they're requesting. Need a user and way to authenticate. To get started with this, will setup `devise` gem with default config.
+
+Add `gem 'devise'` to `Gemfile`, then:
+
+```shell
+$ bundle _1.17.3_ install
+$ bin/rails g devise:install
+Running via Spring preloader in process 67487
+      create  config/initializers/devise.rb
+      create  config/locales/devise.en.yml
+===============================================================================
+
+Some setup you must do manually if you haven't yet:
+
+  1. Ensure you have defined default url options in your environments files. Here
+     is an example of default_url_options appropriate for a development environment
+     in config/environments/development.rb:
+
+       config.action_mailer.default_url_options = { host: 'localhost', port: 3000 }
+
+     In production, :host should be set to the actual host of your application.
+
+  2. Ensure you have defined root_url to *something* in your config/routes.rb.
+     For example:
+
+       root to: "home#index"
+
+  3. Ensure you have flash messages in app/views/layouts/application.html.erb.
+     For example:
+
+       <p class="notice"><%= notice %></p>
+       <p class="alert"><%= alert %></p>
+
+  4. You can copy Devise views (for customization) to your app by running:
+
+       rails g devise:views
+```
+
+Only need to run first instruction for now - add `config.action_mailer.default_url_options = { host: 'localhost', port: 3000 }` at end of `config/environments/development.rb` and `test.rb`
+
+**Generate User**
+
+Use devise to generate user migration and model, then run the migration:
+
+```shell
+$ bin/rails g devise user
+Running via Spring preloader in process 68061
+  invoke  active_record
+  create    db/migrate/20191124220841_devise_create_users.rb
+  create    app/models/user.rb
+  invoke    rspec
+  create      spec/models/user_spec.rb
+  invoke      factory_bot
+  create        spec/factories/users.rb
+  insert    app/models/user.rb
+  route  devise_for :users
+$ bin/rake db:migrate
+```
+
+Edit generated [user factory](i-rock/spec/factories/users.rb) to provide default values for required fields:
+
+```ruby
+# i-rock/spec/factories/users.rb
+
+```
+
+Devise provides helpers for controller tests, modify [i-rock/spec/rails_helper.rb](i-rock/spec/rails_helper.rb) so its included:
+
+```ruby
+# i-rock/spec/rails_helper.rb
+...
+require 'rspec/rails'
+require 'devise'
+...
+# Devise
+config.include Devise::TestHelpers, type: :controller
+```
+
+### Test Authentication
