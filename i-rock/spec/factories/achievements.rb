@@ -2,7 +2,7 @@
 
 FactoryBot.define do
   factory :achievement do
-    sequence(:title) { |n| "Achievement #{n}"}
+    sequence(:title) { |n| "Achievement #{n}" }
     description { 'description' }
     featured { false }
     cover_image { 'some_file.png' }

@@ -20,6 +20,8 @@
     - [Test New and Show Actions](#test-new-and-show-actions)
     - [Test Create Action](#test-create-action)
     - [Test Index and Edit Actions](#test-index-and-edit-actions)
+    - [Test Update and Destroy Actions](#test-update-and-destroy-actions)
+    - [Install and Setup Devise gem](#install-and-setup-devise-gem)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -36,6 +38,7 @@
 | `bundle exec rake routes`      | List all routes |
 | `bin/rspec`      | Run all tests      |
 | `bin/rspec spec/controllers` | Run only controller tests      |
+| `bin/rspec --format=documentation` | Run tests with documentation |
 | `bin/cucumber` | Run cucumber tests |
 
 ## TDD 101
@@ -731,6 +734,15 @@ Course uses Factory Girl but that's been deprecated in favour of Factory Bot, se
 
 Used to prepare Data for tests.
 
+**Commonly used methods**
+
+| Method        | Description           |
+| ------------- |-------------|
+| create      | Create model and populate in database |
+| build      | Create model in memory only      |
+| create_list | Create a list of models and populate in database      |
+| attributes_for | Create a hash of attributes with default values from the factory |
+
 Add new [spec for achievement page](i-rock/spec/features/achievement_page_spec.rb) that creates an achievement, then visits the page that displays it:
 
 ```ruby
@@ -1284,3 +1296,314 @@ end
 ```
 
 ### Test Index and Edit Actions
+
+Add tests for index action, then implement. Then same for edit. Start with outline of index tests:
+
+```ruby
+# i-rock/spec/controllers/achievements_controller_spec.rb
+describe 'GET index' do
+  it 'renders :index template'
+  it 'assigns only public achievements to template'
+end
+```
+
+Currently there is no `index` route due to this line in router `resources :achievements, only: %i[new create show]`, remove the `only` restriction as now we will have all CRUD operations.
+
+```ruby
+# i-rock/config/routes.rb
+Rails.application.routes.draw do
+  resources :achievements
+  root to: 'welcome#index'
+end
+```
+
+Then test will fail since `index` action does not exist yet - add it to controller, will also need to add template for view. That will be enough to make first test pass. But need more implementation to make second test pass.
+
+```ruby
+# i-rock/app/controllers/achievements_controller.rb
+def index
+  # naive implementation fetches all, but should only be public
+  # @achievements = Achievement.all
+
+  # Solution is simple because enums are used
+  @achievements = Achievement.public_access
+end
+```
+
+```ruby
+# app/views/achievements/index.html.erb
+```
+
+For second test, create both a public and private achievement so can verify public is displayed and private is not displayed. Use matcher `match_array` to compare arrays.
+
+```ruby
+# i-rock/spec/controllers/achievements_controller_spec.rb
+describe 'GET index' do
+  it 'renders :index template' do
+    get :index
+    expect(response).to render_template(:index)
+  end
+
+  it 'assigns only public achievements to template' do
+    public_achievement = FactoryBot.create(:public_achievement)
+    FactoryBot.create(:private_achievement)
+    get :index
+    expect(assigns(:achievements)).to match_array([public_achievement])
+  end
+end
+```
+
+Outline for edit tests are similar to show:
+
+```ruby
+# i-rock/spec/controllers/achievements_controller_spec.rb
+describe 'GET edit' do
+  it 'renders :edit template'
+  it 'assigns the requested achievement to template'
+end
+```
+
+Both tests will need some data so define it in `let` block just inside `describe`.
+
+Edit achievement route requires an achievement id as can be seen by rake routes `edit_achievement GET    /achievements/:id/edit(.:format) achievements#edit`
+
+To make edit tests pass will need edit action in controller and edit template `app/views/achievements/edit.html.erb` (can be empty for now)
+
+```ruby
+# i-rock/app/controllers/achievements_controller.rb
+def edit
+  @achievement = Achievement.find(params[:id])
+end
+```
+
+### Test Update and Destroy Actions
+
+Finish up CRUD operations for achievements. Add outline for `PUT update`. Similar to `POST create`, will need two contexts, for valid and invalid data. Both context's will need an achievement to edit so can define that once in `let` block just inside `describe`.
+
+Note that `put` request needs an id and a hash of data. Will need to implement `update` action in achievements controller.
+
+For update action, don't need to render but do need to redirect to achievement path, which needs an id, can get that from params. This is just enough code to make first test pass, but note it doesn't actually update the achievement yet:
+
+```ruby
+# i-rock/app/controllers/achievements_controller.rb
+def update
+  def update
+  redirect_to achievement_path(params[:id])
+  end
+end
+```
+
+To test that the model is updated in database, use active record `reload` method, then expect model's title attribute is updated. This test will fail because `update` method in controller isn't actually updating yet. Fix that:
+
+```ruby
+# i-rock/app/controllers/achievements_controller.rb
+def update
+  @achievement = Achievement.find(params[:id])
+  # Updates all the attributes from the passed-in Hash and saves the record. If the object is invalid, the saving will fail and false will be returned.
+  redirect_to achievement_path(@achievement) if @achievement.update_attributes(achievement_params)
+end
+```
+
+For invalid data context, create some invalid data similar to create tests. Expect redirection to edit template, need to handle failure case in controller update method:
+
+```ruby
+# i-rock/app/controllers/achievements_controller.rb
+def update
+  @achievement = Achievement.find(params[:id])
+  if @achievement.update_attributes(achievement_params)
+    redirect_to achievement_path(@achievement)
+  else
+    render :edit
+  end
+end
+```
+
+For deleting an achievement, implement `destroy` method in controller
+
+```ruby
+def destroy
+  Achievement.destroy(params[:id])
+  redirect_to achievements_path
+end
+```
+
+Summary all CRUD operations tested:
+
+```ruby
+# i-rock/spec/controllers/achievements_controller_spec.rb
+require 'rails_helper'
+
+describe AchievementsController, type: :controller do
+  describe 'GET index' do
+    it 'renders :index template' do
+      get :index
+      expect(response).to render_template(:index)
+    end
+    it 'assigns only public achievements to template' do
+      public_achievement = FactoryBot.create(:public_achievement)
+      FactoryBot.create(:private_achievement)
+      get :index
+      expect(assigns(:achievements)).to match_array([public_achievement])
+    end
+  end
+
+  describe 'GET edit' do
+    let(:achievement) { FactoryBot.create(:public_achievement) }
+
+    it 'renders :edit template' do
+      get :edit, id: achievement
+      expect(response).to render_template(:edit)
+    end
+
+    it 'assigns the requested achievement to template' do
+      get :edit, id: achievement
+      expect(assigns(:achievement)).to eq(achievement)
+    end
+  end
+
+  describe 'PUT update' do
+    let(:achievement) { FactoryBot.create(:public_achievement) }
+
+    context 'valid data' do
+      let(:valid_data) { FactoryBot.attributes_for(:public_achievement, title: 'New Title') }
+
+      it 'redirects to achievements#show' do
+        put :update, id: achievement, achievement: valid_data
+        expect(response).to redirect_to(achievement)
+      end
+
+      it 'updates achievement in the database' do
+        put :update, id: achievement, achievement: valid_data
+        # refresh achievement object with data in database
+        achievement.reload
+        expect(achievement.title).to eq('New Title')
+      end
+    end
+
+    context 'invalid data' do
+      let(:invalid_data) { FactoryBot.attributes_for(:public_achievement, title: '', description: 'new') }
+
+      it 'renders :edit template' do
+        put :update, id: achievement, achievement: invalid_data
+        expect(response).to render_template(:edit)
+      end
+
+      it 'does not update achievement in the database' do
+        put :update, id: achievement, achievement: invalid_data
+        achievement.reload
+        expect(achievement.description).not_to eq('new')
+      end
+    end
+  end
+
+  describe 'DELETE destroy' do
+    let(:achievement) { FactoryBot.create(:public_achievement) }
+
+    it 'redirects to achievements#index' do
+      delete :destroy, id: achievement
+      expect(response).to redirect_to(achievements_path)
+    end
+
+    it 'deletes achievement from database' do
+      delete :destroy, id: achievement
+      expect(Achievement.exists?(achievement.id)).to be_falsy
+    end
+  end
+
+  describe 'GET new' do
+    it 'renders :new template' do
+      get :new
+      expect(response).to render_template(:new)
+    end
+
+    it 'assigns new Achievement to @achievement' do
+      get :new
+      expect(assigns(:achievement)).to be_a_new(Achievement)
+    end
+  end
+
+  describe 'GET show' do
+    let(:achievement) { FactoryBot.create(:public_achievement) }
+    it 'renders :show template' do
+      get :show, id: achievement.id
+      expect(response).to render_template(:show)
+    end
+
+    it 'assigns requested achievement to @achievement' do
+      get :show, id: achievement.id
+      # instance variable populated in `show` action should be the same as what was just created in test
+      expect(assigns(:achievement)).to eq(achievement)
+    end
+  end
+
+  describe 'POST create' do
+    context 'valid data' do
+      let(:valid_data) { FactoryBot.attributes_for(:public_achievement) }
+
+      it 'redirects to achievements#show' do
+        post :create, achievement: valid_data
+        expect(response).to redirect_to(achievement_path(assigns[:achievement]))
+      end
+
+      it 'creates new achievement in database' do
+        expect {
+          post :create, achievement: valid_data
+        }.to change(Achievement, :count).by(1)
+      end
+    end
+
+    context 'invalid data' do
+      let(:invalid_data) { FactoryBot.attributes_for(:public_achievement, title: '') }
+
+      it 'renders :new  template' do
+        post :create, achievement: invalid_data
+        expect(response).to render_template(:new)
+      end
+
+      it 'does not create new achievement in the database' do
+        expect {
+          post :create, achievement: invalid_data
+        }.not_to change(Achievement, :count)
+      end
+    end
+  end
+end
+```
+
+Run tests with documentation:
+
+```shell
+$ bin/rspec --format=documentation spec/controllers/achievements_controller_spec.rb
+AchievementsController
+  GET index
+    renders :index template
+    assigns only public achievements to template
+  GET edit
+    renders :edit template
+    assigns the requested achievement to template
+  PUT update
+    valid data
+      redirects to achievements#show
+      updates achievement in the database
+    invalid data
+      renders :edit template
+      does not update achievement in the database
+  DELETE destroy
+    redirects to achievements#index
+    deletes achievement from database
+  GET new
+    renders :new template
+    assigns new Achievement to @achievement
+  GET show
+    renders :show template
+    assigns requested achievement to @achievement
+  POST create
+    valid data
+      redirects to achievements#show
+      creates new achievement in database
+    invalid data
+      renders :new  template
+      does not create new achievement in the database
+```
+
+### Install and Setup Devise gem
