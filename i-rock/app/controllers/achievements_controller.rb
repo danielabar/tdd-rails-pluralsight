@@ -2,6 +2,8 @@
 
 # The achievements controller
 class AchievementsController < ApplicationController
+  before_action :authenticate_user!, only: %i[new create edit update destroy]
+
   def index
     # naive implementation fetches all, but should only be public
     # @achievements = Achievement.all

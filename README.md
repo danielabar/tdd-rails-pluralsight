@@ -23,6 +23,7 @@
     - [Test Update and Destroy Actions](#test-update-and-destroy-actions)
     - [Install and Setup Devise gem](#install-and-setup-devise-gem)
     - [Test Authentication](#test-authentication)
+    - [Test Authorization](#test-authorization)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -1688,4 +1689,145 @@ require 'devise'
 config.include Devise::TestHelpers, type: :controller
 ```
 
+**Routes**
+
+New routes exposed by Devise:
+
+```
+                  Prefix Verb   URI Pattern                      Controller#Action
+        new_user_session GET    /users/sign_in(.:format)         devise/sessions#new
+            user_session POST   /users/sign_in(.:format)         devise/sessions#create
+    destroy_user_session DELETE /users/sign_out(.:format)        devise/sessions#destroy
+           user_password POST   /users/password(.:format)        devise/passwords#create
+       new_user_password GET    /users/password/new(.:format)    devise/passwords#new
+      edit_user_password GET    /users/password/edit(.:format)   devise/passwords#edit
+                         PATCH  /users/password(.:format)        devise/passwords#update
+                         PUT    /users/password(.:format)        devise/passwords#update
+cancel_user_registration GET    /users/cancel(.:format)          devise/registrations#cancel
+       user_registration POST   /users(.:format)                 devise/registrations#create
+   new_user_registration GET    /users/sign_up(.:format)         devise/registrations#new
+  edit_user_registration GET    /users/edit(.:format)            devise/registrations#edit
+                         PATCH  /users(.:format)                 devise/registrations#update
+                         PUT    /users(.:format)                 devise/registrations#update
+                         DELETE /users(.:format)                 devise/registrations#destroy
+```
 ### Test Authentication
+
+App will have two roles: Guest user (non authenticated user) and Authenticated user
+
+- Guest User can access `index` and `show` achievements
+- Authenticated User has everything Guest has, plus `new` and `create` achievements
+- Owner (i.e. author of achievement) can additionally `edit`, `update`, `destroy` achievements that they own
+
+Start with test first approach, adding `describe 'guest user'` to Achievements Controller spec, and move `index` and `show` tests to the guest user block. All the other actions are expected to redirect to login page for a guest user. This is expressed as `expect(response).to redirect_to(new_user_session_url)` where `new_user_session_url` is provided by devise as the login page.
+
+```ruby
+# i-rock/spec/controllers/achievements_controller_spec.rb
+describe 'guest user' do
+  ...
+  describe 'GET new' do
+    it 'redirects to login page' do
+      get :new
+      expect(response).to redirect_to(new_user_session_url)
+    end
+  end
+end
+```
+
+Test currently fails because it actually goes to index page successfully:
+
+```
+Failure/Error: expect(response).to redirect_to(new_user_session_url)
+Expected response to be a <redirect>, but was <200>
+```
+
+To fix this, need to implement authentication. Edit `AchievementsController`, add `before_action` and specify devise helper to authenticate user, and for which actions it should apply:
+
+```ruby
+# i-rock/app/controllers/achievements_controller.rb
+class AchievementsController < ApplicationController
+  before_action :authenticate_user!, only: [:new]
+end
+```
+
+Now the guest tests will pass but the other two `GET new` tests will fail, that's ok, will get to them later.
+
+Create tests for all the other actions in guest user block and expect redirect to login page. Add `:create` action to list of authenticated actions in achievements controller to make this pass. Add the other actions as well:
+
+```ruby
+# i-rock/app/controllers/achievements_controller.rb
+class AchievementsController < ApplicationController
+  before_action :authenticate_user!, only: %i[new create edit update destroy]
+end
+```
+
+The guest suite of tests:
+
+```ruby
+# i-rock/spec/controllers/achievements_controller_spec.rb
+describe 'guest user' do
+  describe 'GET index' do
+    it 'renders :index template' do
+      get :index
+      expect(response).to render_template(:index)
+    end
+    it 'assigns only public achievements to template' do
+      public_achievement = FactoryBot.create(:public_achievement)
+      FactoryBot.create(:private_achievement)
+      get :index
+      expect(assigns(:achievements)).to match_array([public_achievement])
+    end
+  end
+
+  describe 'GET show' do
+    let(:achievement) { FactoryBot.create(:public_achievement) }
+    it 'renders :show template' do
+      get :show, id: achievement.id
+      expect(response).to render_template(:show)
+    end
+
+    it 'assigns requested achievement to @achievement' do
+      get :show, id: achievement.id
+      # instance variable populated in `show` action should be the same as what was just created in test
+      expect(assigns(:achievement)).to eq(achievement)
+    end
+  end
+
+  describe 'GET new' do
+    it 'redirects to login page' do
+      get :new
+      expect(response).to redirect_to(new_user_session_url)
+    end
+  end
+
+  describe 'POST create' do
+    it 'redirects to login page' do
+      post :create, achievement: FactoryBot.attributes_for(:public_achievement)
+      expect(response).to redirect_to(new_user_session_url)
+    end
+  end
+
+  describe 'GET edit' do
+    it 'redirects to login page' do
+      get :edit, id: FactoryBot.create(:public_achievement)
+      expect(response).to redirect_to(new_user_session_url)
+    end
+  end
+
+  describe 'PUT update' do
+    it 'redirects to login page' do
+      put :update, id: FactoryBot.create(:public_achievement), achievement: FactoryBot.attributes_for(:public_achievement, title: 'New Title')
+      expect(response).to redirect_to(new_user_session_url)
+    end
+  end
+
+  describe 'DELETE destroy' do
+    it 'redirects to login page' do
+      delete :destroy, id: FactoryBot.create(:public_achievement)
+      expect(response).to redirect_to(new_user_session_url)
+    end
+  end
+end
+```
+
+### Test Authorization
