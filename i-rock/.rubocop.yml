@@ -8,3 +8,6 @@ Metrics/LineLength:
 Style/BlockDelimiters:
   Exclude:
     - 'spec/**/*.rb'
+AllCops:
+  Exclude:
+    - 'db/migrate/**/*.rb'

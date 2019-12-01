@@ -1831,3 +1831,300 @@ end
 ```
 
 ### Test Authorization
+
+Just after guest block, add `describe 'authenticated user'` block of tests for achievements controller
+
+All tests in this suite will need a user so create it as usual with `FactoryBot.create(:user)`, but also need this user logged in so use `before` block to ensure user will be logged in before every test.
+
+Use devise helper `sign_in(user)` to log user in.
+
+```ruby
+describe 'authenticated user' do
+  let(:user) { FactoryBot.create(:user) }
+  before do
+    sign_in(user)
+  end
+  # tests go here...
+end
+```
+
+Authenticated user should have access to index and show actions, same as guest user. Also has `GET new` and `POST create`.
+
+For edit, update and destroy - need two contexts, one for user is owner of the achievement, and another where they are not owner.
+
+When user is not owner, result is similar to guest user -> not allowed to perform the action, similar to guest edit, update and destroy tests, except do not expect edit to new user session url because in this case, there is a logged in user. Instead, user should be redirected to `achievements_path`.
+
+Currently the `is not theowner of the achievement` tests are failing, need to implement ownership in code.
+
+Need to create association between user and achievement -> achievement belongs to user. This requires adding `user_id` to `achievements` table. Generate migration:
+
+```shell
+$ bin/rails g migration AddUserToAchievements user:references
+```
+
+Generates:
+
+```ruby
+# i-rock/db/migrate/20191201204205_add_user_to_achievements.rb
+class AddUserToAchievements < ActiveRecord::Migration
+  def change
+    add_reference :achievements, :user, index: true, foreign_key: true
+  end
+end
+```
+
+Apply migration:
+
+```shell
+$ bin/rake db:migrate
+```
+
+Now edit the achievement model classe to tell Rails about relationship between achievements and users:
+
+```ruby
+# i-rock/app/models/achievement.rb
+class Achievement < ActiveRecord::Base
+  belongs_to :user
+  ...
+end
+```
+
+Then use this relationship in achievements controller to introduce authorization.
+
+NOTE: For real app, would use [cancan](https://github.com/ryanb/cancan), but for course, will implement a simple `before_action` method. `current_user` is provided by `devise` gem.
+
+Since the new method will define `@achievement` instance variable, it can be deleted from `edit` and `update` actions, and change `destroy` to use the instance variable.
+
+```ruby
+# i-rock/app/controllers/achievements_controller.rb
+class AchievementsController < ApplicationController
+  before_action :authenticate_user!, only: %i[new create edit update destroy]
+  before_action :owners_only, only: %i[edit update destroy]
+  ...
+  def edit
+  end
+
+  def update
+    if @achievement.update_attributes(achievement_params)
+      redirect_to achievement_path(@achievement)
+    else
+      render :edit
+    end
+  end
+
+  def destroy
+    @achievement.destroy
+    redirect_to achievements_path
+  end
+
+  private
+  ...
+  def owners_only
+    @achievement = Achievement.find(params[:id])
+    redirect_to achievements_path if current_user != @achievement.user
+  end
+end
+```
+
+Now all the authenticated user achievement controller tests are passing.
+
+When user is owner of achievement, use the `GET edit`, `PUT update`, and `DELETE destroy` tests that were we wrote way earlier in course. But move the achievement created by FactoryBot up out of describe and into context level for `user is owner` tests. But indicate that it belongs to the signed in user:
+
+```ruby
+# i-rock/spec/controllers/achievements_controller_spec.rb
+describe AchievementsController, type: :controller do
+  ...
+  describe 'authenticated user' do
+    let(:user) { FactoryBot.create(:user) }
+    before do
+      sign_in(user)
+    end
+
+    ...
+
+    context 'is the owner of the achievement' do
+      let(:achievement) { FactoryBot.create(:public_achievement, user: user) }
+
+      describe 'GET edit' do
+        it 'renders :edit template' do
+          get :edit, id: achievement
+          expect(response).to render_template(:edit)
+        end
+
+        it 'assigns the requested achievement to template' do
+          get :edit, id: achievement
+          expect(assigns(:achievement)).to eq(achievement)
+        end
+      end
+
+      describe 'PUT update' do
+        context 'valid data' do
+          let(:valid_data) { FactoryBot.attributes_for(:public_achievement, title: 'New Title') }
+
+          it 'redirects to achievements#show' do
+            put :update, id: achievement, achievement: valid_data
+            expect(response).to redirect_to(achievement)
+          end
+
+          it 'updates achievement in the database' do
+            put :update, id: achievement, achievement: valid_data
+            # refresh achievement object with data in database
+            achievement.reload
+            expect(achievement.title).to eq('New Title')
+          end
+        end
+
+        context 'invalid data' do
+          let(:invalid_data) { FactoryBot.attributes_for(:public_achievement, title: '', description: 'new') }
+
+          it 'renders :edit template' do
+            put :update, id: achievement, achievement: invalid_data
+            expect(response).to render_template(:edit)
+          end
+
+          it 'does not update achievement in the database' do
+            put :update, id: achievement, achievement: invalid_data
+            achievement.reload
+            expect(achievement.description).not_to eq('new')
+          end
+        end
+      end
+
+      describe 'DELETE destroy' do
+        it 'redirects to achievements#index' do
+          delete :destroy, id: achievement
+          expect(response).to redirect_to(achievements_path)
+        end
+
+        it 'deletes achievement from database' do
+          delete :destroy, id: achievement
+          expect(Achievement.exists?(achievement.id)).to be_falsy
+        end
+      end
+    end
+  end
+end
+```
+
+Now entire achievements controller tests are passing.
+
+But there is some duplication between guest and authenticated user tests in `GET index` and `GET show`.
+
+Use RSpec `shared_examples` to remove duplication. Cut out the `GET index` and `GET show` describe blocks from `guest user` and place in `shared_examples` at top of test.
+
+Then use these with `it_behaves_like`
+
+```ruby
+# i-rock/spec/controllers/achievements_controller_spec.rb
+describe AchievementsController, type: :controller do
+  shared_examples 'public access to achievements' do
+    describe 'GET index' do
+      it 'renders :index template' do
+        get :index
+        expect(response).to render_template(:index)
+      end
+      it 'assigns only public achievements to template' do
+        public_achievement = FactoryBot.create(:public_achievement)
+        FactoryBot.create(:private_achievement)
+        get :index
+        expect(assigns(:achievements)).to match_array([public_achievement])
+      end
+    end
+
+    describe 'GET show' do
+      let(:achievement) { FactoryBot.create(:public_achievement) }
+      it 'renders :show template' do
+        get :show, id: achievement.id
+        expect(response).to render_template(:show)
+      end
+
+      it 'assigns requested achievement to @achievement' do
+        get :show, id: achievement.id
+        # instance variable populated in `show` action should be the same as what was just created in test
+        expect(assigns(:achievement)).to eq(achievement)
+      end
+    end
+  end
+
+  describe 'guest user' do
+    it_behaves_like 'public access to achievements'
+    ...
+  end
+
+  describe 'authenticated user' do
+    let(:user) { FactoryBot.create(:user) }
+    before do
+      sign_in(user)
+    end
+
+    it_behaves_like 'public access to achievements'
+    ...
+  end
+end
+```
+
+But running all tests, getting some failures in acceptance tests because they're trying to create an achievement without being logged in.
+
+Use page object pattern, introduce a login form to fill out.
+
+Since both scenarios need user to have visited login page and filled out the login form, extract this to `before` block. Could also use `background`, which is alias for `before`.
+
+**Aliases:**
+- feature === describe
+- scenario === it
+- background === before
+
+```ruby
+# i-rock/spec/support/login_form.rb
+class LoginForm
+  include Capybara::DSL
+
+  def visit_page
+    visit('/users/sign_in')
+    self
+  end
+
+  def login_as(user)
+    fill_in('Email', with: user.email)
+    fill_in('Password', with: user.password)
+    click_on('Log in')
+    self
+  end
+end
+
+# i-rock/spec/features/create_achievement_with_po_spec.rb
+require 'rails_helper'
+require_relative '../support/new_achievement_form'
+require_relative '../support/login_form'
+
+# frozen_string_literal: true
+
+require 'rails_helper'
+require_relative '../support/new_achievement_form'
+require_relative '../support/login_form'
+
+feature 'create new achievement' do
+  let(:new_achievement_form) { NewAchievementForm.new }
+  let(:login_form) { LoginForm.new }
+  let(:user) { FactoryBot.create(:user) }
+
+  before do
+    login_form.visit_page.login_as(user)
+  end
+
+  scenario 'create new achievement with valid data' do
+    new_achievement_form.visit_page.fill_in_with(
+      title: 'Read a book'
+    ).submit
+
+    expect(page).to have_content('Achievement has been created')
+    expect(Achievement.last.title).to eq('Read a book')
+  end
+
+  scenario 'cannot create achievement with invalid data' do
+    new_achievement_form.visit_page.submit
+    expect(page).to have_content("can't be blank")
+  end
+end
+
+```
