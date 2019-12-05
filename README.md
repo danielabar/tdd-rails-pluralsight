@@ -24,6 +24,11 @@
     - [Install and Setup Devise gem](#install-and-setup-devise-gem)
     - [Test Authentication](#test-authentication)
     - [Test Authorization](#test-authorization)
+  - [Model Tests](#model-tests)
+    - [Model's Responsibilities](#models-responsibilities)
+    - [Test Validations](#test-validations)
+    - [Test Associations](#test-associations)
+    - [Test Instance Methods](#test-instance-methods)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -2128,3 +2133,257 @@ feature 'create new achievement' do
 end
 
 ```
+
+## Model Tests
+
+Model === ActiveRecord
+
+### Model's Responsibilities
+
+- Validations
+- Associations
+- DB Queries
+- Business logic (debatable)
+
+Example - Achievement Model:
+
+```ruby
+# i-rock/app/models/achievement.rb
+class Achievement < ActiveRecord::Base
+  # Association
+  belongs_to :user
+
+  # Validation
+  validates :title, presence: true
+
+  enum privacy: %i[public_access private_access friends_acceess]
+
+  # Business logic instance method
+  def description_html
+    Redcarpet::Markdown.new(Redcarpet::Render::HTML).render(description)
+  end
+end
+```
+
+### Test Validations
+
+Model tests structure:
+
+1. Arrange data
+2. Make some action
+3. Assert something
+
+When writing validation tests, the action will typically be `modelInstance.valid?`. The `valid?` method validates the model but does not make any database requests.
+
+When expecting validation errors in a test, use the `errors` property of the model. Can also use `valid?` and expect it to be falsy.
+
+```ruby
+# i-rock/spec/models/achievement_spec.rb
+require 'rails_helper'
+
+RSpec.describe Achievement, type: :model do
+  describe 'validations' do
+    it 'requires title' do
+      achievement = Achievement.new(title: '')
+      achievement.valid?
+      expect(achievement.errors[:title]).to include("can't be blank")
+      # another way to assert without depending on particular message string
+      expect(achievement.errors[:title]).not_to be_empty
+      # a more general way
+      expect(achievement.valid?).to be_falsy
+    end
+  end
+end
+```
+
+Suppose we have a new requirement to make `title` unique, but only within the scope of a given user. To test this, first create an achievement for a user and save to db via `FactoryBot.create...`. Then instantiate a new achievement model and check it's `valid?`, expecting result to be falsy.
+
+```ruby
+# i-rock/spec/models/achievement_spec.rb
+require 'rails_helper'
+RSpec.describe Achievement, type: :model do
+  describe 'validations' do
+    ...
+    it 'requires title to be unique for one user' do
+      user = FactoryBot.create(:user)
+      FactoryBot.create(:public_achievement, title: 'First Achievement', user: user)
+      new_achievement = Achievement.new(title: 'First Achievement', user: user)
+      expect(new_achievement.valid?).to be_falsy
+    end
+  end
+end
+```
+
+Test currently fails because there is no uniqueness validation - implement this in model:
+
+```ruby
+# i-rock/app/models/achievement.rb
+class Achievement < ActiveRecord::Base
+  belongs_to :user
+  validates :title, presence: true
+  validates :title, uniqueness: true
+  ...
+end
+```
+
+Now test passes, BUT also need to allow different users to use the same title for their achievements:
+
+```ruby
+# i-rock/spec/models/achievement_spec.rb
+RSpec.describe Achievement, type: :model do
+  describe 'validations' do
+    ...
+    it 'allows different users to have achievements with identical titles' do
+      user1 = FactoryBot.create(:user)
+      user2 = FactoryBot.create(:user)
+      FactoryBot.create(:public_achievement, title: 'First Achievement', user: user1)
+      new_achievement = Achievement.new(title: 'First Achievement', user: user2)
+      expect(new_achievement.valid?).to be_truthy
+    end
+  end
+end
+```
+
+This test fails because the current unique implementation is across ALL records. Fix this in model by implementing a custom validator: (there's actually validation options built into Rails we could use but just to demonstrate use and testing of custom validator)
+
+```ruby
+# i-rock/app/models/achievement.rb
+class Achievement < ActiveRecord::Base
+  belongs_to :user
+  validates :title, presence: true
+  validate :unique_title_for_one_user
+
+  ...
+
+  private
+
+  def unique_title_for_one_user
+    # Search for any other achievement that has the same title as the current instance
+    existing_achievement = Achievement.find_by(title: title)
+    # Check if user on existing achievement is the same as current instance
+    errors.add(:title, "you can't have two achievements with the same title") if existing_achievement && user && existing_achievement.user == user
+  end
+end
+```
+
+Now tests pass.
+
+### Test Associations
+
+Expect achievement to always have an associated user:
+
+```ruby
+describe 'associations' do
+  it 'belongs to user' do
+    achievement = FactoryBot.build(:public_achievement, title: 'Some title', user: nil)
+    expect(achievement.valid?).to be_falsy
+  end
+end
+```
+
+Test currently fails because this association is not enforced. Fix it by adding another validation to model `validates :user, presence: true`.
+
+Another test to verify presence of association with user:
+
+```ruby
+describe 'associations' do
+  it 'belongs to user' do
+    achievement = FactoryBot.build(:public_achievement, title: 'Some title', user: nil)
+    expect(achievement.valid?).to be_falsy
+  end
+
+  it 'has belongs_to user association' do
+    # 1 approach - with database
+    user = FactoryBot.create(:user)
+    achievement = FactoryBot.create(:public_achievement, user: user)
+    expect(achievement.user).to eq(user)
+
+    # 2 approach - no database
+    u = Achievement.reflect_on_association(:user)
+    expect(u.macro).to eq(:belongs_to)
+  end
+end
+```
+
+Model test is currently very large with lots of setup code. Can be reduced with `shoulda-matchers` gem. Add to `:test` section of `Gemfile`: `gem 'shoulda-matchers', require: false`, then bundle install.
+
+Include it in `rails_helper.rb`:
+
+```ruby
+require 'rspec/rails'
+require 'shoulda/matchers'
+require 'devise'
+...
+Shoulda::Matchers.configure do |config|
+  config.integrate do |with|
+    with.test_framework :rspec
+    with.library :rails
+  end
+end
+```
+
+belongs to test can be replaced with:
+
+```ruby
+it { should belong_to(:user) }
+```
+
+Validate requires title test can be replaced with:
+
+```ruby
+it {should validate_presence_of(:title) }
+```
+
+Remove custom uniqueness validation and do it the rails way. Instead of passing `true` to `uniqueness` validation, pass an object with options. One option is `scope`, give it `:user_id`, which tells the validation that it only applies over `user_id`. Can also provide a custom message:
+
+```ruby
+# i-rock/app/models/achievement.rb
+class Achievement < ActiveRecord::Base
+  belongs_to :user
+  validates :title, presence: true
+  validates :user, presence: true
+  validates :title, uniqueness: {
+    scope: :user_id,
+    message: "you can't have two achievements with the same title "
+  }
+  ...
+end
+```
+
+Now the two uniqueness tests can be replaced with:
+
+```ruby
+it {
+  should validate_uniqueness_of(:title).scoped_to(:user_id).with_message("can't be blank")
+                                       .with_message("you can't have two achievements with the same title")
+}
+```
+
+Finally presence of user test can be replaced with:
+
+```ruby
+it { should validate_presence_of(:user) }
+```
+
+New and improved model tests:
+
+```ruby
+# i-rock/spec/models/achievement_spec.rb
+require 'rails_helper'
+
+RSpec.describe Achievement, type: :model do
+  describe 'validations' do
+    it { should validate_presence_of(:title) }
+
+    it {
+      should validate_uniqueness_of(:title).scoped_to(:user_id).with_message("can't be blank")
+                                           .with_message("you can't have two achievements with the same title")
+    }
+
+    it { should validate_presence_of(:user) }
+    it { should belong_to(:user) }
+  end
+end
+```
+
+### Test Instance Methods
