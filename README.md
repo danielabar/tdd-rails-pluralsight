@@ -29,6 +29,7 @@
     - [Test Validations](#test-validations)
     - [Test Associations](#test-associations)
     - [Test Instance Methods](#test-instance-methods)
+    - [Test DB Queries](#test-db-queries)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -2387,3 +2388,97 @@ end
 ```
 
 ### Test Instance Methods
+
+Achievement model has one instance method that needs to be tested:
+
+```ruby
+# i-rock/app/models/achievement.rb
+def description_html
+  Redcarpet::Markdown.new(Redcarpet::Render::HTML).render(description)
+end
+```
+
+`include` is a matcher that checks that checks whether the given string is included in the full string.
+
+```ruby
+# i-rock/spec/models/achievement_spec.rb
+it 'converts markdown to html' do
+  achievement = Achievement.new(description: 'Awesome **thing** I *actually* did')
+  expect(achievement.description_html).to include('<strong>thing</strong>')
+  expect(achievement.description_html).to include('<em>actually</em>')
+end
+```
+
+To demonstrate TDD, test for a new method `silly_title` that concatenates achievement title with user's email. Test:
+
+```ruby
+# i-rock/spec/models/achievement_spec.rb
+it 'has silly title' do
+  achievement = Achievement.new(title: 'New Achievement', user: FactoryBot.create(:user, email: 'test@test.com'))
+  expect(achievement.silly_title).to eq('New Achievement by test@test.com')
+end
+```
+
+Running test now will fail on `NoMethodError`, define and implement it in model:
+
+```ruby
+# i-rock/app/models/achievement.rb
+def silly_title
+  "#{title} by #{user.email}"
+end
+```
+
+**General approach for testing model instance methods**
+
+- Instantiate model object with enough data to exercise instance mthod
+- Run the method under test
+- Make assertions on the expected value
+
+### Test DB Queries
+
+Another model responsibility - invoke custom queries against database.
+
+eg: Get achievements whose title starts with a specific letter. Implement as class method on model. Test would prepare all data in database, run the method, then assert only expected data is returned.
+
+Test:
+
+```ruby
+# i-rock/spec/models/achievement_spec.rb
+it 'only fetches achievemetns which title starts from provided letter' do
+  user = FactoryBot.create(:user)
+  achievement1 = FactoryBot.create(:public_achievement, title: 'Read a book', user: user)
+  achievement2 = FactoryBot.create(:public_achievement, title: 'Passed an exam', user: user)
+  expect(Achievement.by_letter('R')).to eq([achievement1])
+end
+```
+
+Test fails because `by_letter` method is not yet defined on model, add it to make tests pass:
+
+```ruby
+# i-rock/app/models/achievement.rb
+def self.by_letter(letter)
+  where('title LIKE ?', "#{letter}%")
+end
+```
+
+More complicated example, `by_letter` method should sort achievements by user email. Careful because by default, records will be returned sorted by id, which reflects order in which they were created:
+
+```ruby
+# i-rock/spec/models/achievement_spec.rb
+it 'sorts achievements by user emails' do
+  albert = FactoryBot.create(:user, email: 'albert@email.com')
+  rob = FactoryBot.create(:user, email: 'rob@email.com')
+  achievement1 = FactoryBot.create(:public_achievement, title: 'Read a book', user: rob)
+  achievement2 = FactoryBot.create(:public_achievement, title: 'Rocked it', user: albert)
+  expect(Achievement.by_letter('R')).to eq([achievement2, achievement1])
+end
+```
+
+Enhance `by_letter` method to include email sorting, to make test pass:
+
+```ruby
+# i-rock/app/models/achievement.rb
+def self.by_letter(letter)
+  includes(:user).where('title LIKE ?', "#{letter}%").order('users.email')
+end
+```
