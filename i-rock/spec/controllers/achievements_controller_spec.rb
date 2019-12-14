@@ -2,6 +2,50 @@
 
 require 'rails_helper'
 
+# Isolation
+describe AchievementsController, type: :controller do
+  describe 'guest user' do
+    describe 'GET index' do
+      # Create test double of achievement instance
+      let(:achievement) { instance_double(Achievement) }
+
+      before(:each) do
+        # stubbed method to avoid hitting database
+        allow(Achievement).to receive(:get_public_achievements).and_return([achievement])
+      end
+
+      it 'renders :index  template' do
+        get :index
+        expect(response).to render_template(:index)
+      end
+
+      it 'assigns public achievementa to template' do
+        get :index
+        expect(assigns(:achievements)).to eq([achievement])
+      end
+    end
+  end
+
+  describe 'authenticated user' do
+    # create instance double of User model
+    let(:user) { instance_double(User) }
+
+    before do
+      # stub current_user
+      allow(controller).to receive(:current_user) { user }
+      # stub authenticate_user! method from controller
+      allow(controller).to receive(:authenticate_user!) { true }
+    end
+
+    describe 'POST create' do
+      it 'sends create message to CreateAchievement' do
+
+      end
+    end
+  end
+end
+
+# Integration
 describe AchievementsController, type: :controller do
   shared_examples 'public access to achievements' do
     describe 'GET index' do

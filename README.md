@@ -30,6 +30,10 @@
     - [Test Associations](#test-associations)
     - [Test Instance Methods](#test-instance-methods)
     - [Test DB Queries](#test-db-queries)
+  - [Testing in Isolation](#testing-in-isolation)
+  - [Mocks, Stubs and Dependency Injection](#mocks-stubs-and-dependency-injection)
+    - [Non Rails Demo](#non-rails-demo)
+    - [Testing Controller in Isolation](#testing-controller-in-isolation)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -2482,3 +2486,166 @@ def self.by_letter(letter)
   includes(:user).where('title LIKE ?', "#{letter}%").order('users.email')
 end
 ```
+
+## Testing in Isolation
+
+So far we've been testing Rails with acceptance and integration tests. These are easy to write but slow to execute.
+
+## Mocks, Stubs and Dependency Injection
+
+Classes which the object under test communicates with are *dependencies* or collaborators.
+
+eg: Building a game where `Character` class rolls a die from `Die` class. When testing `Character` in *isolation* need to remove dependency on `Die` by replacing it with a fake object `FakeDie` that can be controlled in test.
+
+- replacement === *mocking*
+- fake object === *tset double*
+
+**Dependency Injection**
+
+Makes it easy to replace real objecs with fake objects for testing.
+
+Code sample 1 - in instance method `climb`, `Die` dependency is instantiated. This makes it hard to test because `Die` can't easily be replaced.
+
+```ruby
+class Character
+  def initialize
+    @strength = 5
+  end
+
+  def climb
+    die = Die.new
+    die.roll + @strength
+  end
+end
+```
+
+Rewrite `Character` class using *dependency injection*, the `die` dependency is *injected* into `initialize` method. For testing, `Character` object can be instantiated with a fake `die` object that responds to `roll` message:
+
+```ruby
+class Character
+  def initialize(die)
+    @strength = 5
+    @die = die
+  end
+
+  def climb
+    @die.roll + @strength
+  end
+end
+```
+
+Fake object example to test `Character` class:
+
+```ruby
+class FakeDie
+  def roll
+    5
+  end
+end
+
+character = Character.new(FakeDie.new)
+expect(character.roll).to eq(10)
+```
+
+**Two Types of Messages on Objects**
+
+1. QUERY - purpose is to get some data returned
+2. COMMAND - tell another object to do something, usually has side effect, eg: create new record in db
+
+eg QUERY: when Character class invokes `roll` method on `Die` class and receives a random value in return such as `5`. In this case, the dependency on `Die` is stubbed to return a pre-defined value.
+
+`Die` replaced with `FakeDie`: `allow(die).to receive(:roll) { 5 }`
+
+eg COMMAND: Want to log each `Character` attempt to maintain a history of all rolls for each character. Character does this by sending `log` message to `Logger` class. Doesn't return anything, just telling the logger to do something. Side effect is appending data to a log file.
+
+DO NOT TEST SIDE EFFECT OF ANOTHER OBJECT, just ensure that the message has been sent. Replace actual class `Logger` with a test double `FakeLogger`, then assert expectation that log message was sent with provided data: `expect(logger).to receive(:log)`
+
+![stub mock](doc-images/stub-mock.png "stub mock")
+
+**re: AAA (Arrange/Act/Assert)**
+
+With Mocks, expectations (aka assert) are defined *before* acting. Must do this for mocks to work!
+
+Given that `logger` test double. is defined, all tests that don't have expectations for log message
+
+### Non Rails Demo
+
+[Tests](stub-mock-demo/game.rb)
+
+Run tests:
+
+```shell
+$ bundle exec rspec game.rb
+```
+
+To create test double in RSpec, use `double`:
+
+```ruby
+let(:die) { double }
+```
+
+Full example in a single file:
+
+```ruby
+class Character
+  def initialize(strength: 1, die: Die.new, logger: Logger.new)
+    @strength = strength
+    @die = die
+    @logger = logger
+  end
+
+  def climb(difficulty: 10)
+    roll = die.roll + strength
+    logger.log("Climbing check. Difficulty: #{difficulty}. Roll: #{roll}")
+    roll >= difficulty
+  end
+
+  private
+
+  attr_reader :die, :strength, :logger
+end
+
+describe Character do
+  describe 'climbing check skill' do
+    # Stub dependencies of Character class using test doubles
+    let(:die) { double }
+    # Parameters to double: Class, and method and what it returns
+    let(:logger) { double('Logger', log: nil) }
+
+    # Instantiate object under test, passing in test doubles via dependency injection
+    let(:character) { Character.new(strength: 5, die: die, logger: logger) }
+
+    it 'climbs successfully when roll + strength is more than difficulty' do
+      # Stub the roll method
+      allow(die).to receive(:roll) { 11 }
+      expect(character.climb(difficulty: 15)).to be_truthy
+    end
+
+    it 'fails successfully when roll + strength is less than difficulty' do
+      allow(die).to receive(:roll) { 5 }
+      expect(character.climb(difficulty: 15)).to be_falsy
+    end
+
+    it 'commands logger to log climb skill check' do
+      # Arrange: stub roll method
+      allow(die).to receive(:roll) { 7 }
+      # Assert: before act when using mocks
+      expect(logger).to receive(:log).with('Climbing check. Difficulty: 10. Roll: 12')
+      # Act: invoke method under test
+      character.climb(difficulty: 10)
+    end
+  end
+end
+
+```
+
+### Testing Controller in Isolation
+
+The current [achievement controller tests](i-rock/spec/controllers/achievements_controller_spec.rb) are *integration tests* - records are created in db with `FactoryBot`, test against side effects of other object behaviour - eg: verify that record count is increased by one after `POST` submitted.
+
+To test controller behaviour in isolation:
+1. Takes params from request.
+2. Sends messages to other objects to do some work.
+3. Sends back a response.
+
+Left at 12:38

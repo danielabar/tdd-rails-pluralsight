@@ -10,7 +10,9 @@ class AchievementsController < ApplicationController
     # @achievements = Achievement.all
 
     # Solution is simple because enums are used
-    @achievements = Achievement.public_access
+    # @achievements = Achievement.public_access
+    # For testing in isolation
+    @achievements = Achievement.get_public_achievements
   end
 
   def new
