@@ -21,11 +21,13 @@ class AchievementsController < ApplicationController
 
   def create
     @achievement = Achievement.new(achievement_params)
+    @achievement.user = current_user
     if @achievement.save
+      UserMailer.achievement_created(current_user.email, @achievement.id).deliver_now
       # redirect_to root_url, notice: 'Achievement has been created'
       redirect_to achievement_url(@achievement), notice: 'Achievement has been created'
     else
-      render :new
+      render :new, notice: "BOO: #{@achievement.errors.full_messages}"
     end
   end
 

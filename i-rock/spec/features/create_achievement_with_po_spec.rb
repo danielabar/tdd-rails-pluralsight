@@ -20,6 +20,9 @@ feature 'create new achievement' do
 
     expect(page).to have_content('Achievement has been created')
     expect(Achievement.last.title).to eq('Read a book')
+    # expect email to have been sent
+    expect(ActionMailer::Base.deliveries.count).to eq(1)
+    expect(ActionMailer::Base.deliveries.last.to).to include(user.email)
   end
 
   scenario 'cannot create achievement with invalid data' do
