@@ -43,6 +43,9 @@ gem 'redcarpet'
 # Conveniece
 gem 'simple_form'
 
+# File upload
+gem 'carrierwave'
+
 # Auth
 gem 'devise'
 

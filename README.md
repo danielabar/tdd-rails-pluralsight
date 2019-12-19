@@ -2846,3 +2846,120 @@ Useful gems for working with email:
 * [email-spec](https://github.com/email-spec/email-spec)
 
 ### Testing File Upload
+
+Will use `cover_image` field in Achievement model to store user uploaded image.
+
+Will use [carrierwave gem](https://github.com/carrierwaveuploader/carrierwave) to help with file upload.
+
+Start with create achievement spec -> new achievement form
+
+```ruby
+# i-rock/spec/features/create_achievement_with_po_spec.rb
+scenario 'create new achievement with valid data' do
+  new_achievement_form.visit_page.fill_in_with(
+    title: 'Read a book',
+    cover_image: 'cover_image.png'
+  ).submit
+
+  expect(page).to have_content('Achievement has been created')
+  expect(Achievement.last.title).to eq('Read a book')
+
+  # cover_image_identifier is method provided by carrierwave gem
+  expect(Achievement.last.cover_image_identifier).to eq('cover_image.png')
+
+  # expect email to have been sent
+  expect(ActionMailer::Base.deliveries.count).to eq(1)
+  expect(ActionMailer::Base.deliveries.last.to).to include(user.email)
+end
+
+# i-rock/spec/support/new_achievement_form.rb
+def fill_in_with(params = {})
+  # fill_in text helper can be used to fill out text inputs and textareas
+  fill_in('Title', with: params.fetch(:title, 'Read a book'))
+  fill_in('Description', with: 'Excellent read')
+  # select privacy setting
+  select('Public', from: 'Privacy')
+  # checkbox (check/uncheck helper methods)
+  check('Featured achievement')
+  # upload a file
+  attach_file('Cover image',  "#{Rails.root}/spec/fixtures/#{params.fetch(:cover_image, 'cover_image.png')}")
+  self
+end
+```
+
+Add `gem carrierwave` to `Gemfile` and run bundle install.
+
+Generate uploader:
+
+```shell
+$ bin/rails g uploader CoverImage
+Running via Spring preloader in process 27277
+  create  app/uploaders/cover_image_uploader.rb
+```
+
+Append to env config:
+
+```ruby
+# i-rock/config/environment.rb
+require 'carrierwave/orm/activerecord'
+```
+
+Update Achievement model to mount cover image uploader to `cover_image` string field:
+
+```ruby
+class Achievement < ActiveRecord::Base
+  belongs_to :user
+  validates :title, presence: true
+  validates :user, presence: true
+  validates :title, uniqueness: {
+    scope: :user_id,
+    message: "you can't have two achievements with the same title"
+  }
+
+  enum privacy: %i[public_access private_access friends_acceess]
+
+  mount_uploader :cover_image, CoverImageUploader
+
+  ...
+end
+```
+
+Now achievement acceptance test with file upload passes: `bin/rspec spec/features/create_achievement_with_po_spec.rb`
+
+Additional complexity: Validate that only images can be uploaded, no movies, pdf's etc.
+
+Looking at `i-rock/spec/features/create_achievement_with_po_spec.rb`, already have a test for invalid data so don't need another acceptance test, rather, add this test for uploader.
+
+```ruby
+# i-rock/spec/uploaders/cover_image_uploader_sped.rb
+require 'rails_helper'
+
+RSpec.describe CoverImageUploader do
+  it 'allows only inages' do
+    uploader = CoverImageUploader.new(Achievement.new, :cover_image)
+
+    expect {
+      File.open("#{Rails.root}/spec/fixtures/empty_pdf.pdf") do |f|
+        uploader.store!(f)
+      end
+    }.to raise_exception(CarrierWave::IntegrityError)
+  end
+end
+```
+
+Test failes because no exception is raised. Implement this in `CoverImageUploader`:
+
+```ruby
+# i-rock/app/uploaders/cover_image_uploader.rb
+class CoverImageUploader < CarrierWave::Uploader::Base
+  ...
+  # Add a white list of extensions which are allowed to be uploaded.
+  # For images you might use something like this:
+  def extension_whitelist
+    %w[jpg jpeg gif png]
+  end
+  ...
+end
+```
+
+After specifying whitelist, cover uploader test passes.
