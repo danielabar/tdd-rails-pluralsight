@@ -13,14 +13,14 @@ feature 'create new achievement' do
     login_form.visit_page.login_as(user)
   end
 
-  scenario 'create new achievement with valid data' do
+  scenario 'create new achievement with valid data', :vcr do
     new_achievement_form.visit_page.fill_in_with(
-      title: 'Read a book',
+      title: 'Caching with VCR gem',
       cover_image: 'cover_image.png'
     ).submit
 
     expect(page).to have_content('Achievement has been created')
-    expect(Achievement.last.title).to eq('Read a book')
+    expect(Achievement.last.title).to eq('Caching with VCR gem')
 
     # cover_image_identifier is method provided by carrierwave gem
     expect(Achievement.last.cover_image_identifier).to eq('cover_image.png')
@@ -28,6 +28,9 @@ feature 'create new achievement' do
     # expect email to have been sent
     expect(ActionMailer::Base.deliveries.count).to eq(1)
     expect(ActionMailer::Base.deliveries.last.to).to include(user.email)
+
+    # twitter integration
+    expect(page).to have_content('We tweeted for you! https://twitter.com')
   end
 
   scenario 'cannot create achievement with invalid data' do

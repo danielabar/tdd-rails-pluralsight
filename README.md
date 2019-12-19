@@ -36,6 +36,7 @@
   - [Testing Other Cases](#testing-other-cases)
     - [Testing Email](#testing-email)
     - [Testing File Upload](#testing-file-upload)
+    - [Testing Third-party API](#testing-third-party-api)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -2963,3 +2964,133 @@ end
 ```
 
 After specifying whitelist, cover uploader test passes.
+
+### Testing Third-party API
+
+Approaches to testing:
+
+1. Full integration - let app make real requests to third party every time tests run -> BAD - slows down tests and requires internet connection.
+2. Mock everything - mock command messages send to 3rd party and verify only those messages were sent. BUT, can never be sure that integration is really working.
+3. Integration with caching - make real request just the first time and cache the response. Next time spec runs, can use cached response.
+
+Will use [vcr gem](https://github.com/vcr/vcr) for approach #3.
+
+Goal: User would like to tweet about their achievement after they've created it.
+
+Start by adding new expectation to achievement acceptance test:
+
+```ruby
+# i-rock/spec/features/create_achievement_with_po_spec.rb
+scenario 'create new achievement with valid data' do
+  new_achievement_form.visit_page.fill_in_with(
+    title: 'Read a book',
+    cover_image: 'cover_image.png'
+  ).submit
+
+  expect(page).to have_content('Achievement has been created')
+  expect(Achievement.last.title).to eq('Read a book')
+
+  # cover_image_identifier is method provided by carrierwave gem
+  expect(Achievement.last.cover_image_identifier).to eq('cover_image.png')
+
+  # expect email to have been sent
+  expect(ActionMailer::Base.deliveries.count).to eq(1)
+  expect(ActionMailer::Base.deliveries.last.to).to include(user.email)
+
+  # twitter integration
+  expect(page).to have_content('We tweeted for you! https://twitter.com')
+end
+```
+
+Need to create a test twitter account, then create [twitter app](https://developer.twitter.com/en/apps). Will need:
+1. Consumer Key
+2. Access Token
+
+Modify Achievement Controller to send tweet after achievement is created, using new TwitterService (defined below):
+
+```ruby
+def create
+  @achievement = Achievement.new(achievement_params)
+  @achievement.user = current_user
+  if @achievement.save
+    UserMailer.achievement_created(current_user.email, @achievement.id).deliver_now
+    tweet = TwitterService.new.tweet(@achievement.title)
+    redirect_to achievement_url(@achievement), notice: "Achievement has been created. We tweeted for you! #{tweet.url}"
+  else
+    render :new, notice: "BOO: #{@achievement.errors.full_messages}"
+  end
+end
+```
+
+Implement `TwitterService`, will also need twitter gem, add to `Gemfile`: `gem 'twitter'`, also add dotenv gem to avoid hard-coding twitter secrets in ruby code.
+
+**AUTO LOADING SERVICES**
+
+Add to [application config](i-rock/config/application.rb):
+
+```ruby
+# i-rock/config/application.rb
+config.autoload_paths += %W[#{config.root}/app/services]
+```
+
+**PROFILE**
+
+Add to `~/.zshrc`, just before rbenv config, [details](https://stackoverflow.com/questions/52671926/rails-may-have-been-in-progress-in-another-thread-when-fork-was-called):
+
+```shell
+export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
+```
+
+```ruby
+# i-rock/app/services/twitter_service.rb
+class TwitterService
+  def initialize
+    # instantiate twitter client
+    @client = Twitter::REST::Client.new do |config|
+      config.consumer_key = ENV['TWITTER_CONSUMER_KEY']
+      config.consumer_secret = ENV['TWITTER_CONSUMER_SECRET']
+      config.access_token = ENV['TWITTER_ACCESS_TOKEN']
+      config.access_token_secret = ENV['TWITTER_ACCESS_TOKEN_SECRET']
+    end
+  end
+
+  def tweet(message)
+    @client.update(message)
+  end
+end
+```
+
+Now after running test, refresh Twitter and notice tweet with achievement has been posted.
+
+BUT PROBLEM: Every time run test, will post another tweet for real.
+
+**VCR**
+
+Add `gem 'vcr'` to test group in Gemfile, and also `gem 'webmock'`, which is used to mock web requests, used by vcr gem.
+
+Update `rails_helper.rb`:
+
+```ruby
+# i-rock/spec/rails_helper.rb
+...
+require 'vcr'
+
+VCR.configure do |c|
+  # specify dir for cached requests
+  c.cassette_library_dir = 'spec/cassettes'
+  c.hook_into :webmock
+  c.configure_rspec_metadata!
+end
+...
+```
+
+Use VCR in create new achievement test - when test runs for the first time, will make request to twitter for real and cache it in cassettes dir. When test run again after that, will use cached request.
+
+```ruby
+# i-rock/spec/features/create_achievement_with_po_spec.rb
+scenario 'create new achievement with valid data', :vcr do
+  ...
+end
+```
+
+**WATCH OUT** `spec/cassettes` response may contain some sensitive key info depending on what service returns.

@@ -8,6 +8,8 @@ directories:
       enabled: false
     InstanceVariableAssumption:
       enabled: false
+    TooManyStatements:
+      max_statements: 20
   'app/helpers':
     IrresponsibleModule:
       enabled: false

@@ -1,5 +1,7 @@
 source 'https://rubygems.org'
 
+# Environment
+gem 'dotenv-rails', groups: [:development, :test]
 
 # Bundle edge Rails instead: gem 'rails', github: 'rails/rails'
 gem 'rails', '4.2.3'
@@ -46,6 +48,9 @@ gem 'simple_form'
 # File upload
 gem 'carrierwave'
 
+# 3rd party integrations
+gem 'twitter'
+
 # Auth
 gem 'devise'
 
@@ -73,4 +78,6 @@ group :test do
   gem 'cucumber-rails', require: false
   gem 'database_cleaner'
   gem 'shoulda-matchers', require: false
+  gem 'vcr'
+  gem 'webmock'
 end

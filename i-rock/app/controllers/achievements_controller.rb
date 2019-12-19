@@ -1,4 +1,4 @@
-# frozen_string_literal: true
+# require_dependency 'app/services/twitter_service.rb'
 
 # The achievements controller
 class AchievementsController < ApplicationController
@@ -24,8 +24,8 @@ class AchievementsController < ApplicationController
     @achievement.user = current_user
     if @achievement.save
       UserMailer.achievement_created(current_user.email, @achievement.id).deliver_now
-      # redirect_to root_url, notice: 'Achievement has been created'
-      redirect_to achievement_url(@achievement), notice: 'Achievement has been created'
+      tweet = TwitterService.new.tweet(@achievement.title)
+      redirect_to achievement_url(@achievement), notice: "Achievement has been created. We tweeted for you! #{tweet.url}"
     else
       render :new, notice: "BOO: #{@achievement.errors.full_messages}"
     end
