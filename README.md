@@ -37,6 +37,7 @@
     - [Testing Email](#testing-email)
     - [Testing File Upload](#testing-file-upload)
     - [Testing Third-party API](#testing-third-party-api)
+    - [Testing Your Own API](#testing-your-own-api)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -3094,3 +3095,126 @@ end
 ```
 
 **WATCH OUT** `spec/cassettes` response may contain some sensitive key info depending on what service returns.
+
+### Testing Your Own API
+
+1. Setup (eg: db records)
+2. API request with custom headers
+3. Test JSON response
+
+Use Rails *request specs* for this type of testing.
+
+New test for achievements json api.
+
+When making `get` or `post` requests:
+- first argument is url
+- second argument is data (can be nil)
+- third argument is hash of request headers
+
+API tests will usually have `JSON.parse` to parse response from server. Stringified json is stored in `response.body`.
+
+Should conform to [json api spec](https://jsonapi.org/):
+- Response must have `data` array of objects
+- Each representing an achievement
+- Each achievement should have `type` property, `id` property, and `attributes` property which is an object containing all other info about object
+
+```ruby
+# i-rock/spec/requests/api/achievements_spec.rb
+require 'rails_helper'
+
+RSpec.describe 'Achievements API', type: :request do
+  let(:user) { FactoryBot.create(:user) }
+
+  it 'sends public achievements' do
+    # setup: create some achievements in db to be returned by api or not
+    public_achievement = FactoryBot.create(:public_achievement, title: 'My achievement', user: user)
+    private_achievement = FactoryBot.create(:private_achievement, user: user)
+
+    get '/api/achievements', nil, 'Content-Type': 'application/vnd.api+json'
+
+    expect(response.status).to eq(200)
+    json = JSON.parse(response.body)
+
+    expect(json['data'].count).to eq(1)
+    expect(json['data'][0]['type']).to eq('achievements')
+    expect(json['data'][0]['attributes']['title']).to eq('My achievement')
+  end
+end
+
+```
+
+Test fails because haven't yet implemented this api.
+
+Add to routes in a new `api` namespace:
+
+```ruby
+# i-rock/config/routes.rb
+namespace :api do
+  resources :achievements, only: [:index]
+end
+```
+
+Use active model serializer gem to render json response, add to `Gemfile`:
+
+```ruby
+gem 'active_model_serializers', '0.10.0.rc4'
+```
+
+Configure `active_model_serializers` to use json api spec:
+
+```ruby
+# i-rock/config/initializers/active_model_serializers.rb
+ActiveModel::Serializer.config.adapter = ActiveModel::Serializer::Adapter::JsonApi
+```
+
+Generate serializer for model:
+
+```shell
+$ bin/rails g serializer Achievement
+  create  app/serializers/achievement_serializer.rb
+```
+
+Edit generated serializer to add title to attributes:
+
+```ruby
+# i-rock/app/serializers/achievement_serializer.rb
+class AchievementSerializer < ActiveModel::Serializer
+  attributes :id, :title
+end
+
+```
+
+And add controller to implement api. Note expected content type header for json api spec:
+
+```ruby
+# i-rock/app/controllers/api/achievements_controller.rb
+module Api
+  class AchievementsController < ApiController
+    def index
+      achievements = Achievement.public_access
+      render json: achievements
+    end
+  end
+end
+
+# i-rock/app/controllers/api_controller.rb
+class ApiController < ApplicationController
+  protect_from_forgery with: :null_session
+
+  before_action :validate_header
+
+  private
+
+  def validate_header
+    if request.headers['Content-Type'] != 'application/vnd.api+json'
+      render json: {}, status: 400
+    end
+  end
+end
+```
+
+To inspect request headers in controller:
+
+```ruby
+p request.headers['Content-Type']
+```

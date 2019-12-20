@@ -51,6 +51,9 @@ gem 'carrierwave'
 # 3rd party integrations
 gem 'twitter'
 
+# API
+gem 'active_model_serializers', '0.10.0.rc4'
+
 # Auth
 gem 'devise'
 
