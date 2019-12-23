@@ -11,7 +11,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema.define(version: 20191201204205) do
+ActiveRecord::Schema.define(version: 20191223130814) do
 
   create_table "achievements", force: :cascade do |t|
     t.string   "title"
@@ -25,6 +25,17 @@ ActiveRecord::Schema.define(version: 20191201204205) do
   end
 
   add_index "achievements", ["user_id"], name: "index_achievements_on_user_id"
+
+  create_table "encouragements", force: :cascade do |t|
+    t.integer  "user_id"
+    t.integer  "achievement_id"
+    t.string   "message"
+    t.datetime "created_at",     null: false
+    t.datetime "updated_at",     null: false
+  end
+
+  add_index "encouragements", ["achievement_id"], name: "index_encouragements_on_achievement_id"
+  add_index "encouragements", ["user_id"], name: "index_encouragements_on_user_id"
 
   create_table "users", force: :cascade do |t|
     t.string   "email",                  default: "", null: false

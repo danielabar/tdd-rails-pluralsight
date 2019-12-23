@@ -13,6 +13,7 @@ RSpec.describe Achievement, type: :model do
 
     it { should validate_presence_of(:user) }
     it { should belong_to(:user) }
+    it { should have_many(:encouragements) }
   end
 
   it 'converts markdown to html' do

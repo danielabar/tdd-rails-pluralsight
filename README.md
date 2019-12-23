@@ -38,6 +38,10 @@
     - [Testing File Upload](#testing-file-upload)
     - [Testing Third-party API](#testing-third-party-api)
     - [Testing Your Own API](#testing-your-own-api)
+  - [Test-drive Complete Feature](#test-drive-complete-feature)
+    - [Feature Spec](#feature-spec)
+    - [Encouragement Controller](#encouragement-controller)
+    - [Create Encouragement](#create-encouragement)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -3218,3 +3222,338 @@ To inspect request headers in controller:
 ```ruby
 p request.headers['Content-Type']
 ```
+
+## Test-drive Complete Feature
+
+Go through example of adding an entirely new feature, with TDD:
+
+Give users ability to post an encouragement message on other user's achievements. A user can only post one encouragement message on a given achievement. Also cannot encourage your own achievement.
+
+### Feature Spec
+
+Start with *feature test* with Capybara, and implement all the needed *page objects*:
+
+```ruby
+# i-rock/spec/features/create_encouragement_spec.rb
+require 'rails_helper'
+require_relative '../support/login_form'
+require_relative '../support/achievement_page'
+require_relative '../support/encouragement_form'
+
+feature 'create encouragement' do
+  let(:user)  { FactoryBot.create(:user) }
+  let(:achievement_owner) { FactoryBot.create(:user) }
+  let(:achievement) { FactoryBot.create(:achievement, user: achievement_owner) }
+
+  let(:login_form) { LoginForm.new }
+  let(:achievement_page) { AchievementPage.new }
+  let(:encouragement_form) { EncouragementForm.new }
+
+  scenario 'authenticated user leaves encouragement for achievement' do
+    login_form.visit_page.login_as(user)
+
+    achievement_page.visit_page(achievement).encourage
+    encouragement_form.leave_encouragement(text: 'You rock!').submit
+
+    expect(page).to have_content("Encouragement left by #{user.mail}")
+    expect(page).to have_content('You rock!')
+    expect(page).to have_css('#encouragement-quantity', text: '1')
+  end
+end
+
+
+# i-rock/spec/support/achievement_page.rb
+class AchievementPage
+  include Capybara::DSL
+
+  def visit_page(achievement)
+    visit("/achievements/#{achievement.id}")
+    self
+  end
+
+  def encourage
+    click_on('encourage-button')
+    self
+  end
+end
+
+# i-rock/spec/support/encouragement_form.rb
+class EncouragementForm
+  include Capybara::DSL
+
+  def leave_encouragement(attrs = {})
+    fill_in('encouragement_message', with: attrs.fetch(:text, 'good job'))
+    self
+  end
+
+  def submit
+    click_on('Encourage')
+    self
+  end
+end
+```
+
+Run feature test: `bin/rspec spec/features/create_encouragement_spec.rb`.
+
+Fails because don't have encourage button.
+
+Start with routes. Since encouragement is related to achievement, use *nested route*.
+
+```ruby
+# i-rock/config/routes.rb
+...
+resources :achievements do
+  resources :encouragements, only: %i[new create]
+end
+...
+```
+
+Modify show achievements template to display encouragement section:
+
+```ruby
+# i-rock/app/views/achievements/show.html.erb
+<h1><%= @achievement.title %></h1>
+<div class="desc">
+  <%= @achievement.description_html.html_safe %>
+</div>
+
+<div class="encouragement">
+  <h2>Encouragements</h2>
+
+  <%= link_to 'Encourage', new_achievement_encouragement_path(@achievement), id: 'encourage-button' %>
+</div>
+```
+
+### Encouragement Controller
+
+Start with encouragements controller test:
+
+```ruby
+# i-rock/spec/controllers/encouragements_controller_spec.rb
+require 'rails_helper'
+
+RSpec.describe EncouragementsController do
+  let(:user) { FactoryBot.create(:user) }
+  let(:author) { FactoryBot.create(:user) }
+  let(:achievement) { FactoryBot.create(:public_achievement, user: author) }
+
+  describe 'GET new' do
+    context 'guest user' do
+      it 'is redirected back to achievement page' do
+        get :new, achievement_id: achievement.id
+        expect(response).to redirect_to(achievement_path(achievement))
+      end
+
+      it 'assigns flash message' do
+        get :new, achievement_id: achievement.id
+        expect(flash[:alert]).to eq('You must be logged in to encourage people')
+      end
+    end
+
+    context 'authenticated user' do
+      before { sign_in(user) }
+
+      it 'renderes :new template' do
+        get :new, achievement_id: achievement.id
+        expect(response).to render_template(:new)
+      end
+
+      it 'assigns new encouragement to template' do
+        get :new, achievement_id: achievement.id
+        expect(assigns(:encouragement)).to be_a_new(Encouragement)
+      end
+    end
+
+    context 'achievement author' do
+      before { sign_in(author)  }
+
+      it 'is redirected back to achievement page' do
+        get :new, achievement_id: achievement.id
+        expect(response).to redirect_to(achievement_path(achievement))
+      end
+
+      it 'assigns flash message' do
+        get :new, achievement_id: achievement.id
+        expect(flash[:alert]).to eq("You can't encourage yourself")
+      end
+    end
+
+    context 'user who already left encouragement for this achievement' do
+      before do
+        sign_in(user)
+        FactoryBot.create(:encouragement, user: user, achievement: achievement)
+      end
+
+      it 'is redirected back to achievement page' do
+        get :new, achievement_id: achievement.id
+        expect(response).to redirect_to(achievement_path(achievement))
+      end
+
+      it 'assigns flash message' do
+        get :new, achievement_id: achievement.id
+        expect(flash[:alert]).to eq("You already encouraged it. You can't be so generous!")
+      end
+    end
+  end
+end
+```
+
+And controller.
+
+Note use of custom auth rather than devise because devise would redirect guest user to signup page and that's not behaviour we want for encouragement:
+
+```ruby
+# i-rock/app/controllers/encouragements_controller.rb
+class EncouragementsController < ApplicationController
+  before_action :authenticate_user
+  before_action :authors_are_not_allowed
+  before_action :only_one_encouragement
+
+  def new
+    @encouragement = Encouragement.new
+  end
+
+  private
+
+  def authenticate_user
+    @achievement = Achievement.find(params[:achievement_id])
+    unless current_user
+      redirect_to achievement_path(@achievement), alert: 'You must be logged in to encourage people'
+      return
+    end
+  end
+
+  def authors_are_not_allowed
+    if current_user.id == @achievement.user_id
+      redirect_to achievement_path(@achievement), alert: "You can't encourage yourself"
+      return
+    end
+  end
+
+  def only_one_encouragement
+    if Encouragement.exists?(user: current_user, achievement: @achievement)
+      redirect_to achievement_path(@achievement), alert: "You already encouraged it. You can't be so generous!"
+    end
+  end
+end
+```
+
+And view - left empty for now, good enough just to be present to get controller tests passing:
+
+```ruby
+# i-rock/app/views/encouragements/new.html.erb
+```
+
+And model - encouragement belongs to a user and also belongs to an achievement, and just has a simple string field for `message`:
+
+```shell
+$ bin/rails g model Encouragement user:references achievement:references message
+invoke  active_record
+create    db/migrate/20191223130814_create_encouragements.rb
+create    app/models/encouragement.rb
+invoke    rspec
+create      spec/models/encouragement_spec.rb
+invoke      factory_bot
+create        spec/factories/encouragements.rb
+$ bin/rake db:migrate
+= 20191223130814 CreateEncouragements: migrating =============================
+-- create_table(:encouragements)
+   -> 0.0026s
+== 20191223130814 CreateEncouragements: migrated (0.0027s) ====================
+```
+
+Model tests:
+
+```ruby
+# i-rock/spec/models/encouragement_spec.rb
+require 'rails_helper'
+
+RSpec.describe Encouragement, type: :model do
+  it { should belong_to(:user) }
+  it { should belong_to(:achievement) }
+  it { should validate_presence_of(:message) }
+end
+```
+
+Model:
+
+```ruby
+# i-rock/app/models/encouragement.rb
+class Encouragement < ActiveRecord::Base
+  belongs_to :user
+  belongs_to :achievement
+
+  validates :message, presence: true
+end
+```
+
+User model also needs some tests wrt encouragement relationship:
+
+```ruby
+require 'rails_helper'
+
+RSpec.describe User, type: :model do
+  it { should have_many(:encouragements) }
+end
+```
+
+Specfy this relationship on user model:
+
+```ruby
+# i-rock/app/models/user.rb
+class User < ActiveRecord::Base
+  # Include default devise modules. Others available are:
+  # :confirmable, :lockable, :timeoutable, :trackable and :omniauthable
+  devise :database_authenticatable, :registerable,
+         :recoverable, :rememberable, :validatable
+
+  has_many :encouragements
+end
+```
+
+Update Achievement model spec for relationship to encouragements:
+
+```ruby
+# i-rock/spec/models/achievement_spec.rb
+RSpec.describe Achievement, type: :model do
+  describe 'validations' do
+    it { should validate_presence_of(:title) }
+
+    it {
+      should validate_uniqueness_of(:title).scoped_to(:user_id).with_message("can't be blank")
+                                          .with_message("you can't have two achievements with the same title")
+    }
+
+    it { should validate_presence_of(:user) }
+    it { should belong_to(:user) }
+    it { should have_many(:encouragements) }
+  end
+  ...
+end
+```
+
+Update Achievement model to specify relationship to encouragements:
+
+```ruby
+# i-rock/app/models/achievement.rb
+class Achievement < ActiveRecord::Base
+  belongs_to :user
+  has_many :encouragements
+  ...
+end
+```
+
+Update generated encouragement factory to support our test cases - remove `nil` from `user` and `achievement` properties so that when FactoryBot is invoked to build an encouragement, it will automatically create an associated user and achievement:
+
+```ruby
+# i-rock/spec/factories/encouragements.rb
+FactoryBot.define do
+  factory :encouragement do
+    user
+    achievement
+    message { 'MyString' }
+  end
+end
+```
+
+### Create Encouragement

@@ -2,3 +2,9 @@
 <div class="desc">
   <%= @achievement.description_html.html_safe %>
 </div>
+
+<div class="encouragement">
+  <h2>Encouragements</h2>
+
+  <%= link_to 'Encourage', new_achievement_encouragement_path(@achievement), id: 'encourage-button' %>
+</div>
