@@ -18,7 +18,7 @@ feature 'create encouragement' do
     achievement_page.visit_page(achievement).encourage
     encouragement_form.leave_encouragement(text: 'You rock!').submit
 
-    expect(page).to have_content("Encouragement left by #{user.mail}")
+    expect(page).to have_content("Encouragement left by #{user.email}")
     expect(page).to have_content('You rock!')
     expect(page).to have_css('#encouragement-quantity', text: '1')
   end

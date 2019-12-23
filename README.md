@@ -42,6 +42,7 @@
     - [Feature Spec](#feature-spec)
     - [Encouragement Controller](#encouragement-controller)
     - [Create Encouragement](#create-encouragement)
+    - [Finishing Touches](#finishing-touches)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -3557,3 +3558,257 @@ end
 ```
 
 ### Create Encouragement
+
+Back to `i-rock/spec/features/create_encouragement_spec.rb`, test still fails because there is no encouragement form to fill out yet.
+
+Implement in view, need to provide both achievement and encouragement models because its a nested route:
+
+```ruby
+# i-rock/app/views/encouragements/new.html.erb
+<%= simple_form_for [@achievement, @encouragement] do |f| %>
+  <%= f.input :message, placeholder: 'Say something nice...' %>
+  <%= f.submit 'Encourage' %>
+<% end %>
+```
+
+Now test fails because `create` action has not yet been defined in controller, first add tests for it in controller spec:
+
+```ruby
+# i-rock/spec/controllers/encouragements_controller_spec.rb
+require 'rails_helper'
+
+RSpec.describe EncouragementsController do
+  let(:user) { FactoryBot.create(:user) }
+  let(:author) { FactoryBot.create(:user) }
+  let(:achievement) { FactoryBot.create(:public_achievement, user: author) }
+
+  describe 'GET new' do
+    context 'guest user' do
+      it 'is redirected back to achievement page' do
+        get :new, achievement_id: achievement.id
+        expect(response).to redirect_to(achievement_path(achievement))
+      end
+
+      it 'assigns flash message' do
+        get :new, achievement_id: achievement.id
+        expect(flash[:alert]).to eq('You must be logged in to encourage people')
+      end
+    end
+
+    context 'authenticated user' do
+      before { sign_in(user) }
+
+      it 'renderes :new template' do
+        get :new, achievement_id: achievement.id
+        expect(response).to render_template(:new)
+      end
+
+      it 'assigns new encouragement to template' do
+        get :new, achievement_id: achievement.id
+        expect(assigns(:encouragement)).to be_a_new(Encouragement)
+      end
+    end
+
+    context 'achievement author' do
+      before { sign_in(author)  }
+
+      it 'is redirected back to achievement page' do
+        get :new, achievement_id: achievement.id
+        expect(response).to redirect_to(achievement_path(achievement))
+      end
+
+      it 'assigns flash message' do
+        get :new, achievement_id: achievement.id
+        expect(flash[:alert]).to eq("You can't encourage yourself")
+      end
+    end
+
+    context 'user who already left encouragement for this achievement' do
+      before do
+        sign_in(user)
+        FactoryBot.create(:encouragement, user: user, achievement: achievement)
+      end
+
+      it 'is redirected back to achievement page' do
+        get :new, achievement_id: achievement.id
+        expect(response).to redirect_to(achievement_path(achievement))
+      end
+
+      it 'assigns flash message' do
+        get :new, achievement_id: achievement.id
+        expect(flash[:alert]).to eq("You already encouraged it. You can't be so generous!")
+      end
+    end
+  end
+
+  describe 'POST create' do
+    let(:encouragement_params) { FactoryBot.attributes_for(:encouragement) }
+
+    context 'authenticated user' do
+      before { sign_in(user) }
+
+      context 'valid data' do
+        it 'redirects back to achievement page' do
+          post :create, achievement_id: achievement.id, encouragement: encouragement_params
+          expect(response).to redirect_to(achievement_path(achievement))
+        end
+
+        it 'assigns encouragement to current user and achievement' do
+          post :create, achievement_id: achievement.id, encouragement: encouragement_params
+          enc = Encouragement.last
+          expect(enc.user).to eq(user)
+          expect(enc.achievement).to eq(achievement)
+        end
+
+        it 'assigns flash message' do
+          post :create, achievement_id: achievement.id, encouragement: encouragement_params
+          expect(flash[:notice]).to eq('Thank you for encouragement')
+        end
+      end
+
+      context 'invalid data' do
+        let(:invalid_params) { FactoryBot.attributes_for(:encouragement, message: nil) }
+
+        it 'renders :new template' do
+          post :create, achievement_id: achievement.id, encouragement: invalid_params
+          expect(response).to render_template(:new)
+        end
+      end
+    end
+
+    context 'guest user' do
+      it 'is redirected back to achievement page' do
+        post :create, achievement_id: achievement.id, encouragement: encouragement_params
+        expect(response).to redirect_to(achievement_path(achievement))
+      end
+
+      it 'assigns flash message' do
+        post :create, achievement_id: achievement.id, encouragement: encouragement_params
+        expect(flash[:alert]).to eq('You must be logged in to encourage people')
+      end
+    end
+
+    context 'achievement author' do
+      before { sign_in(author)  }
+
+      it 'is redirected back to achievement page' do
+        post :create, achievement_id: achievement.id, encouragement: encouragement_params
+        expect(response).to redirect_to(achievement_path(achievement))
+      end
+
+      it 'assigns flash message' do
+        post :create, achievement_id: achievement.id, encouragement: encouragement_params
+        expect(flash[:alert]).to eq("You can't encourage yourself")
+      end
+    end
+
+    context 'user who already left encouragement for this achievement' do
+      before do
+        sign_in(user)
+        FactoryBot.create(:encouragement, user: user, achievement: achievement)
+      end
+
+      it 'is redirected back to achievement page' do
+        post :create, achievement_id: achievement.id, encouragement: encouragement_params
+        expect(response).to redirect_to(achievement_path(achievement))
+      end
+
+      it 'assigns flash message' do
+        post :create, achievement_id: achievement.id, encouragement: encouragement_params
+        expect(flash[:alert]).to eq("You already encouraged it. You can't be so generous!")
+      end
+    end
+  end
+end
+```
+
+Implement auth and actions in controller:
+
+```ruby
+# i-rock/app/controllers/encouragements_controller.rb
+class EncouragementsController < ApplicationController
+  before_action :authenticate_user
+  before_action :authors_are_not_allowed
+  before_action :only_one_encouragement
+
+  def new
+    @encouragement = Encouragement.new
+  end
+
+  def create
+    @encouragement = Encouragement.new(encouragement_params.merge(
+      user: current_user,
+      achievement: @achievement
+    ))
+    if @encouragement.save
+      redirect_to achievement_path(@achievement), notice: 'Thank you for encouragement'
+    else
+      render :new
+    end
+  end
+
+  private
+
+  def encouragement_params
+    params.require(:encouragement).permit(:message)
+  end
+
+  def authenticate_user
+    @achievement = Achievement.find(params[:achievement_id])
+    unless current_user
+      redirect_to achievement_path(@achievement), alert: 'You must be logged in to encourage people'
+      return
+    end
+  end
+
+  def authors_are_not_allowed
+    if current_user.id == @achievement.user_id
+      redirect_to achievement_path(@achievement), alert: "You can't encourage yourself"
+      return
+    end
+  end
+
+  def only_one_encouragement
+    if Encouragement.exists?(user: current_user, achievement: @achievement)
+      redirect_to achievement_path(@achievement), alert: "You already encouraged it. You can't be so generous!"
+    end
+  end
+end
+```
+
+### Finishing Touches
+
+Last part of feature test `bin/rspec spec/features/create_encouragement_spec.rb` is failing because still not displaying message `Encouragement left by email1@email.com`
+
+To implement, need to display encouragment on achievment page:
+
+```ruby
+# i-rock/app/views/achievements/show.html.erb
+<h1><%= @achievement.title %></h1>
+<div class="desc">
+  <%= @achievement.description_html.html_safe %>
+</div>
+
+<div class="encouragement">
+  <h2>Encouragements <span id="encouragement-quantity"><%= @achievement.encouragements.count %></span></h2>
+
+  <ul>
+    <% @achievement.encouragements.each do |enc| %>
+      <li>Encouragement left by <%= enc.user.email %>: <%= enc.message %></li>
+    <% end %>
+  </ul>
+
+  <%= link_to 'Encourage', new_achievement_encouragement_path(@achievement), id: 'encourage-button' %>
+</div>
+```
+
+Modify app layout to display alerts:
+
+```ruby
+# i-rock/app/views/layouts/application.html.erb
+...
+<% if flash[:alert] %>
+  <div class="alert alert-danger"><%= flash[:alert] %></div>
+<% end %>
+...
+```

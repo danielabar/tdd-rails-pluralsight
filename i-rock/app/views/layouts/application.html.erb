@@ -8,7 +8,7 @@
 </head>
 <body>
 
-<div class="container-fluid">
+<div class="contai ner-fluid">
   <nav class="navbar navbar-expand-lg navbar-light bg-light">
     <a class="navbar-brand" href="#">I Rock</a>
     <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
@@ -24,7 +24,7 @@
           <%= link_to 'New Achievement', new_achievement_path %>
         </li>
         <li class="nav-item">
-          <a class="nav-link" href="#">Link</a>
+          <%= link_to 'Logout', destroy_user_session_path, method: :delete %>
         </li>
       </ul>
     </div>
@@ -32,6 +32,7 @@
   <% if flash[:notice] %>
     <div class="alert alert-info"><%= flash[:notice] %></div>
   <% end %>
+
   <%= yield %>
 </div>
 
